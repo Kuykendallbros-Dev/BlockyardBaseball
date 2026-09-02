@@ -15,15 +15,11 @@ import {
   WebGLRenderer,
 } from 'three';
 import { aspectRatio } from './math.ts';
-import {
-  PITCH_DURATION,
-  PLATE_POINT,
-  RELEASE_POINT,
-  ballPositionAt,
-} from './game/pitch.ts';
+import { PLATE_POINT, RELEASE_POINT, ballPositionAt } from './game/pitch.ts';
 import { judgeSwing, launchVelocity } from './game/swing.ts';
 import type { SwingJudgement } from './game/swing.ts';
 import { METRES_TO_FEET, carryDistance, projectilePosition } from './game/flight.ts';
+import { type Pitch, plateTarget, rollPitch } from './game/pitching.ts';
 import { createSounds } from './game/audio.ts';
 import { createEffects } from './effects.ts';
 
@@ -31,8 +27,8 @@ const FOV_DEGREES = 55;
 const CAMERA_HOME = new Vector3(0, 2.4, -5.2);
 /** Seconds the pitcher holds the ball before each pitch. */
 const WIND_TIME = 1.3;
-/** No swing by this many seconds after release = the batter took the pitch. */
-const TAKE_CUTOFF = PITCH_DURATION + 0.22;
+/** Extra seconds after the ball crosses the plate before a no-swing is a take. */
+const TAKE_GRACE = 0.22;
 /** Seconds the outcome readout stays up before the next pitch. */
 const RESULT_TIME = 1.8;
 /** Hard cap on how long a batted ball stays animated. */
@@ -44,6 +40,7 @@ const ZONE_IDLE = 0xffd23f;
 const ZONE_HIT = 0x35c759;
 const ZONE_FOUL = 0xff9f0a;
 const ZONE_MISS = 0xff3b30;
+const ZONE_BALL = 0x4c9bff;
 
 type Phase = 'winding' | 'pitch' | 'result';
 
@@ -58,10 +55,10 @@ export interface BlockyardScene {
 
 /**
  * Build the Phase 0 batter's box: a fixed camera behind home plate, a pitcher
- * cube that lobs the ball across the plate on a timer, and a spacebar swing
- * whose timing resolves into whiff / foul / contact (perfect / solid / weak),
- * each with a readout, a sound, a spark burst, screen shake, a ball trail, and
- * a carry-distance callout on a clean hit.
+ * cube that throws a rolled pitch (type / speed / location / late break) across
+ * the plate on a timer, and a spacebar swing whose timing resolves into whiff /
+ * foul / contact (perfect / solid / weak) with a readout, a sound, a spark
+ * burst, screen shake, a ball trail, and a carry-distance callout on a hit.
  */
 export function createScene(container: HTMLElement): BlockyardScene {
   const scene = new Scene();
@@ -132,6 +129,7 @@ export function createScene(container: HTMLElement): BlockyardScene {
   let phase: Phase = 'winding';
   let phaseClock = 0;
   let pitchClock = 0;
+  let pitch: Pitch = rollPitch();
   let judgement: SwingJudgement | null = null;
   let contactPos: [number, number, number] = [0, 0, 0];
   let battedVel: [number, number, number] | null = null;
@@ -146,6 +144,11 @@ export function createScene(container: HTMLElement): BlockyardScene {
 
   function setBall(p: readonly [number, number, number]): void {
     ball.position.set(p[0], p[1], p[2]);
+  }
+
+  /** Ball position along the current pitch at flight fraction `u`. */
+  function pitchBallAt(u: number): [number, number, number] {
+    return ballPositionAt(u, plateTarget(pitch.location), pitch.lateBreak);
   }
 
   function shake(magnitude: number, duration: number): void {
@@ -173,7 +176,8 @@ export function createScene(container: HTMLElement): BlockyardScene {
     phase = 'pitch';
     phaseClock = 0;
     pitchClock = 0;
-    readout = 'here it comes';
+    pitch = rollPitch();
+    readout = pitch.type;
   }
 
   function endWithResult(tint: number): void {
@@ -184,10 +188,10 @@ export function createScene(container: HTMLElement): BlockyardScene {
 
   function swing(): void {
     if (phase !== 'pitch' || judgement !== null) return;
-    const error = pitchClock - PITCH_DURATION;
+    const error = pitchClock - pitch.duration;
     swingClock = 0;
     judgement = judgeSwing(error);
-    contactPos = ballPositionAt(pitchClock / PITCH_DURATION);
+    contactPos = pitchBallAt(pitchClock / pitch.duration);
 
     if (judgement.result === 'contact' && judgement.quality) {
       const quality = judgement.quality;
@@ -243,11 +247,11 @@ export function createScene(container: HTMLElement): BlockyardScene {
     // phase === 'pitch'
     pitchClock += dt;
     if (judgement === null) {
-      setBall(ballPositionAt(pitchClock / PITCH_DURATION));
-      if (pitchClock >= TAKE_CUTOFF) {
-        readout = 'took it';
+      setBall(pitchBallAt(pitchClock / pitch.duration));
+      if (pitchClock >= pitch.duration + TAKE_GRACE) {
+        readout = pitch.inZone ? 'took it — strike' : 'took it — ball';
         sounds.mitt();
-        endWithResult(ZONE_MISS);
+        endWithResult(pitch.inZone ? ZONE_MISS : ZONE_BALL);
       }
       return;
     }
@@ -256,8 +260,8 @@ export function createScene(container: HTMLElement): BlockyardScene {
       endWithResult(judgement.result === 'contact' ? ZONE_HIT : ZONE_FOUL);
     } else {
       // whiffed — let the pitch finish crossing the plate
-      setBall(ballPositionAt(pitchClock / PITCH_DURATION));
-      if (pitchClock > PITCH_DURATION + 0.35) endWithResult(ZONE_MISS);
+      setBall(pitchBallAt(pitchClock / pitch.duration));
+      if (pitchClock > pitch.duration + 0.35) endWithResult(ZONE_MISS);
     }
   }
 
