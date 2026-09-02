@@ -31,10 +31,21 @@ export function judgeSwing(errorSeconds: number): SwingJudgement {
 }
 
 const EXIT_SPEED: Record<ContactQuality, number> = {
-  perfect: 34,
-  solid: 26,
-  weak: 16,
+  perfect: 38,
+  solid: 28,
+  weak: 15,
 };
+
+/**
+ * Launch angle in degrees for a contact swing. A clean hit drives the ball on a
+ * carrying line; a weak hit is a grounder when you roll over an early swing and
+ * a lazy pop-up when you get under a late one.
+ */
+function launchAngleDeg(errorSeconds: number, quality: ContactQuality): number {
+  if (quality === 'perfect') return 26;
+  if (quality === 'solid') return 20;
+  return errorSeconds < 0 ? 7 : 44;
+}
 
 /**
  * Batted-ball velocity (m/s) for a contact swing. Earlier contact pulls the ball
@@ -46,9 +57,7 @@ export function launchVelocity(
   quality: ContactQuality,
 ): [number, number, number] {
   const speed = EXIT_SPEED[quality];
-  // launch angle: a clean hit lifts more than a mishit
-  const angleDeg = quality === 'perfect' ? 28 : quality === 'solid' ? 22 : 12;
-  const angle = (angleDeg * Math.PI) / 180;
+  const angle = (launchAngleDeg(errorSeconds, quality) * Math.PI) / 180;
 
   // spray: -0.35s..+0.35s of error maps to roughly -35deg..+35deg of pull/push
   const spray = Math.max(-0.6, Math.min(0.6, -errorSeconds * 1.8));
