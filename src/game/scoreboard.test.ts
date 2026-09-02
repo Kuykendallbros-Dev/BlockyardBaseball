@@ -48,4 +48,11 @@ describe('formatScoreboard', () => {
       'TOP 2  ·  2-1  ·  1 out  ·  bases empty  ·  AWAY 3  HOME 2',
     );
   });
+
+  it('uses supplied team names, upper-cased', () => {
+    const state = newHalfInning();
+    expect(
+      formatScoreboard(0, state, { away: 0, home: 0 }, { away: 'Cats', home: 'Dogs' }),
+    ).toBe('TOP 1  ·  0-0  ·  0 outs  ·  bases empty  ·  CATS 0  DOGS 0');
+  });
 });
