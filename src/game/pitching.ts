@@ -62,8 +62,12 @@ function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
 }
 
-/** Roll the next pitch. `rand` must return values in [0, 1). */
-export function rollPitch(rand: () => number = Math.random): Pitch {
+/**
+ * Roll the next pitch. `rand` must return values in [0, 1). `zoneBias` nudges the
+ * chance the pitch is aimed inside the strike zone (e.g. a pitcher grooving one
+ * on a 3-0 count, or chasing a strikeout with two strikes).
+ */
+export function rollPitch(rand: () => number = Math.random, zoneBias = 0): Pitch {
   let roll = rand();
   let type: PitchType = 'fastball';
   for (const name of ORDER) {
@@ -77,7 +81,8 @@ export function rollPitch(rand: () => number = Math.random): Pitch {
   const profile = PROFILES[type];
   const duration = PITCH_DURATION * lerp(profile.speed[0], profile.speed[1], rand());
 
-  const aimZone = rand() < ZONE_TARGET_RATE;
+  const zoneRate = Math.max(0.05, Math.min(0.95, ZONE_TARGET_RATE + zoneBias));
+  const aimZone = rand() < zoneRate;
   const spanX = ZONE_HALF_WIDTH * (aimZone ? 0.8 : 1.7);
   const spanY = ZONE_HALF_HEIGHT * (aimZone ? 0.8 : 1.7);
   const location: [number, number] = [
