@@ -22,9 +22,10 @@ import { METRES_TO_FEET, carryDistance, projectilePosition } from './game/flight
 import { type Pitch, plateTarget, rollPitch } from './game/pitching.ts';
 import { classifyBallInPlay, landingFrom, resolvePitch } from './game/atbat.ts';
 import type { PitchOutcome } from './game/atbat.ts';
-import { formatScoreboard } from './game/scoreboard.ts';
-import type { TeamNames } from './game/scoreboard.ts';
+import { battingSide, formatScoreboard } from './game/scoreboard.ts';
+import type { BattingSide, TeamNames } from './game/scoreboard.ts';
 import { type GameState, applyPitchToGame, newGame } from './game/game.ts';
+import { LEAGUE_AVERAGE_BATTER, batterDecision, zoneBiasForCount } from './game/ai.ts';
 import { createSounds } from './game/audio.ts';
 import { createEffects } from './effects.ts';
 import { createRunners } from './runners.ts';
@@ -36,6 +37,11 @@ const CAMERA_HOME = new Vector3(0, 2.4, -5.2);
 const WIND_TIME = 1.3;
 const TAKE_GRACE = 0.22;
 const RESULT_TIME = 1.9;
+/** The human always plays the home team (bats in the bottom half). */
+const HUMAN_SIDE: BattingSide = 'home';
+/** AI half-innings run on a tighter clock since the human only watches. */
+const AI_WIND_TIME = 0.7;
+const AI_RESULT_TIME = 1.15;
 const MAX_FLIGHT = 3.5;
 const SWING_DURATION = 0.11;
 const SWING_ANGLE = -1.5;
@@ -189,6 +195,14 @@ export function createScene(container: HTMLElement): BlockyardScene {
   let game: GameState = newGame();
   let pendingHalfReset = false;
 
+  const aiBatter = LEAGUE_AVERAGE_BATTER;
+  let aiSwingScheduled = false;
+  let aiSwingAt = 0;
+
+  function aiBatting(): boolean {
+    return battingSide(game.halfIndex) !== HUMAN_SIDE;
+  }
+
   function setBall(p: readonly [number, number, number]): void {
     ball.position.set(p[0], p[1], p[2]);
   }
@@ -252,8 +266,20 @@ export function createScene(container: HTMLElement): BlockyardScene {
     phase = 'pitch';
     phaseClock = 0;
     pitchClock = 0;
-    pitch = rollPitch();
-    readout = pitch.type;
+    pitch = rollPitch(Math.random, zoneBiasForCount(game.half));
+
+    if (aiBatting()) {
+      readout = `${pitch.type} — ${teams.away} hitting`;
+      const decision = batterDecision(aiBatter, pitch.inZone, Math.random);
+      aiSwingScheduled = decision.swing;
+      aiSwingAt = Math.min(
+        Math.max(pitch.duration + decision.timingError, 0.06),
+        pitch.duration + TAKE_GRACE - 0.02,
+      );
+    } else {
+      readout = pitch.type;
+      aiSwingScheduled = false;
+    }
   }
 
   function endWithResult(): void {
@@ -364,6 +390,7 @@ export function createScene(container: HTMLElement): BlockyardScene {
     }
     if (k === 'Space') {
       e.preventDefault();
+      if (aiBatting()) return; // the AI is hitting — nothing for the human to do
       if (phase === 'winding') beginPitch();
       else swing();
     }
@@ -372,16 +399,22 @@ export function createScene(container: HTMLElement): BlockyardScene {
   function stepRound(dt: number): void {
     if (phase === 'winding') {
       setBall(RELEASE_POINT);
-      if (phaseClock >= WIND_TIME) beginPitch();
+      if (phaseClock >= (aiBatting() ? AI_WIND_TIME : WIND_TIME)) beginPitch();
       return;
     }
 
     if (phase === 'result') {
-      if (phaseClock >= RESULT_TIME && !ballFlying) beginWinding();
+      const dwell = aiBatting() ? AI_RESULT_TIME : RESULT_TIME;
+      if (phaseClock >= dwell && !ballFlying) beginWinding();
       return;
     }
 
     pitchClock += dt;
+
+    if (aiSwingScheduled && judgement === null && pitchClock >= aiSwingAt) {
+      swing();
+    }
+
     if (judgement === null) {
       setBall(pitchBallAt(pitchClock / pitch.duration));
       if (pitchClock >= pitch.duration + TAKE_GRACE) {
