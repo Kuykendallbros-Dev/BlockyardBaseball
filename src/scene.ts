@@ -22,8 +22,8 @@ import { METRES_TO_FEET, carryDistance, projectilePosition } from './game/flight
 import { type Pitch, plateTarget, rollPitch } from './game/pitching.ts';
 import { classifyBallInPlay, landingFrom, resolvePitch } from './game/atbat.ts';
 import type { PitchOutcome } from './game/atbat.ts';
-import { type HalfInningState, applyPitch, newHalfInning } from './game/inning.ts';
-import { type Score, battingSide, formatScoreboard } from './game/scoreboard.ts';
+import { formatScoreboard } from './game/scoreboard.ts';
+import { type GameState, applyPitchToGame, newGame } from './game/game.ts';
 import { createSounds } from './game/audio.ts';
 import { createEffects } from './effects.ts';
 import { createRunners } from './runners.ts';
@@ -63,14 +63,16 @@ function tintFor(outcome: PitchOutcome): number {
       return ZONE_MISS;
     case 'in-play':
       return outcome.play.hit ? ZONE_HIT : ZONE_MISS;
+    default:
+      return ZONE_IDLE;
   }
 }
 
 /**
- * Build the Phase 0 / Phase 1 batter's box: a fixed camera behind home plate, a
- * rolled pitch each cycle, a spacebar swing, and the pure sim (`atbat` +
- * `inning`) driving a live count, outs, baserunners on a diamond, and a
- * scoreboard. The half-inning resets at the third out.
+ * Build the batter's box: a fixed camera behind home plate, a rolled pitch each
+ * cycle, a spacebar swing, and the pure sim (`atbat` → `inning` → `game`)
+ * driving a live count, outs, baserunners on a diamond, a scoreboard, and a
+ * full nine-inning game with a win screen and "play again".
  */
 export function createScene(container: HTMLElement): BlockyardScene {
   const scene = new Scene();
@@ -146,6 +148,11 @@ export function createScene(container: HTMLElement): BlockyardScene {
   board.className = 'scoreboard';
   container.appendChild(board);
 
+  const overlay = document.createElement('div');
+  overlay.className = 'gameover';
+  overlay.hidden = true;
+  container.appendChild(overlay);
+
   const sounds = createSounds();
   const effects = createEffects(scene);
   const runners = createRunners(scene);
@@ -166,9 +173,8 @@ export function createScene(container: HTMLElement): BlockyardScene {
   let shakeDuration = 0.3;
   let shakeMagnitude = 0;
 
-  let inningState: HalfInningState = newHalfInning();
-  let halfIndex = 0;
-  const score: Score = { away: 0, home: 0 };
+  let game: GameState = newGame();
+  let pendingHalfReset = false;
 
   function setBall(p: readonly [number, number, number]): void {
     ball.position.set(p[0], p[1], p[2]);
@@ -184,28 +190,37 @@ export function createScene(container: HTMLElement): BlockyardScene {
     shakeMagnitude = magnitude;
   }
 
-  /** Fold a resolved pitch into the sim, then update score, runners, and HUD. */
-  function concludePitch(outcome: PitchOutcome, feel = ''): void {
-    const before = inningState;
-    inningState = applyPitch(inningState, outcome);
+  function totalRuns(state: GameState): number {
+    return state.score.away + state.score.home;
+  }
 
-    const runs = inningState.runs - before.runs;
-    if (runs > 0) {
-      score[battingSide(halfIndex)] += runs;
+  /** Fold a resolved pitch into the game, then update score, runners, and HUD. */
+  function concludePitch(outcome: PitchOutcome, feel = ''): void {
+    const before = game;
+    game = applyPitchToGame(game, outcome);
+
+    if (totalRuns(game) > totalRuns(before)) {
       sounds.crowd('perfect');
       shake(0.2, 0.4);
     }
 
-    runners.setBases(inningState.bases);
-    readout = feel ? `${feel} — ${inningState.lastEvent}` : inningState.lastEvent;
+    if (game.halfIndex !== before.halfIndex) pendingHalfReset = true;
+    else runners.setBases(game.half.bases);
+
+    readout = feel ? `${feel} — ${game.half.lastEvent}` : game.half.lastEvent;
     zoneTint = tintFor(outcome);
+
+    if (game.final) {
+      const who = game.winner === 'home' ? 'HOME' : 'AWAY';
+      overlay.textContent = `${who} WINS  ${game.score.away}–${game.score.home}  ·  SPACE to play again`;
+      overlay.hidden = false;
+    }
   }
 
   function beginWinding(): void {
-    if (inningState.over) {
-      halfIndex += 1;
-      inningState = newHalfInning();
+    if (pendingHalfReset) {
       runners.reset();
+      pendingHalfReset = false;
     }
     phase = 'winding';
     phaseClock = 0;
@@ -215,7 +230,7 @@ export function createScene(container: HTMLElement): BlockyardScene {
     ballFlying = false;
     flightClock = 0;
     swingClock = -1;
-    if (!inningState.over) readout = 'SPACE to swing';
+    readout = 'SPACE to swing';
     zoneTint = ZONE_IDLE;
     effects.clearTrail();
     setBall(RELEASE_POINT);
@@ -232,6 +247,14 @@ export function createScene(container: HTMLElement): BlockyardScene {
   function endWithResult(): void {
     phase = 'result';
     phaseClock = 0;
+  }
+
+  function restart(): void {
+    game = newGame();
+    pendingHalfReset = false;
+    runners.reset();
+    overlay.hidden = true;
+    beginWinding();
   }
 
   function swing(): void {
@@ -278,6 +301,10 @@ export function createScene(container: HTMLElement): BlockyardScene {
   function onKeyDown(e: KeyboardEvent): void {
     if (e.code !== 'Space') return;
     e.preventDefault();
+    if (game.final) {
+      restart();
+      return;
+    }
     if (phase === 'winding') beginPitch();
     else swing();
   }
@@ -336,7 +363,7 @@ export function createScene(container: HTMLElement): BlockyardScene {
 
   function step(dt: number): void {
     phaseClock += dt;
-    stepRound(dt);
+    if (!game.final) stepRound(dt);
     stepBall(dt);
     effects.update(dt);
     runners.update(dt);
@@ -350,8 +377,10 @@ export function createScene(container: HTMLElement): BlockyardScene {
 
     stepCamera(dt);
     zoneMaterial.color.setHex(zoneTint);
-    hud.textContent = readout;
-    board.textContent = formatScoreboard(halfIndex, inningState, score);
+    hud.textContent = game.final ? '' : readout;
+    board.textContent = game.final
+      ? `FINAL  ·  AWAY ${game.score.away}  HOME ${game.score.home}`
+      : formatScoreboard(game.halfIndex, game.half, game.score);
   }
 
   let last = performance.now();
@@ -387,6 +416,7 @@ export function createScene(container: HTMLElement): BlockyardScene {
       renderer.domElement.remove();
       hud.remove();
       board.remove();
+      overlay.remove();
     },
   };
 }
