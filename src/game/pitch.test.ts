@@ -32,4 +32,23 @@ describe('ballPositionAt', () => {
       prev = z;
     }
   });
+
+  it('ends at a custom target', () => {
+    const target: [number, number, number] = [0.3, 1.4, 0.6];
+    const end = ballPositionAt(1, target);
+    expect(end[0]).toBeCloseTo(target[0]);
+    expect(end[1]).toBeCloseTo(target[1]);
+    expect(end[2]).toBeCloseTo(target[2]);
+  });
+
+  it('applies late break that is negligible early and full at the plate', () => {
+    const lateBreak: [number, number] = [0.4, -0.3];
+    const early = ballPositionAt(0.1, PLATE_POINT, lateBreak);
+    const straightEarly = ballPositionAt(0.1);
+    const end = ballPositionAt(1, PLATE_POINT, lateBreak);
+
+    expect(Math.abs(early[0] - straightEarly[0])).toBeLessThan(0.01);
+    expect(end[0]).toBeCloseTo(PLATE_POINT[0] + lateBreak[0]);
+    expect(end[1]).toBeCloseTo(PLATE_POINT[1] + lateBreak[1]);
+  });
 });
