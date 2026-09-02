@@ -19,3 +19,19 @@ body,
 #app canvas {
   display: block;
 }
+
+.hud {
+  position: fixed;
+  left: 50%;
+  bottom: 9%;
+  transform: translateX(-50%);
+  padding: 0.4rem 1.1rem;
+  font: 700 1.4rem/1 system-ui, -apple-system, sans-serif;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.45);
+  border-radius: 0.4rem;
+  pointer-events: none;
+  white-space: nowrap;
+}
