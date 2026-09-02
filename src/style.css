@@ -35,3 +35,18 @@ body,
   pointer-events: none;
   white-space: nowrap;
 }
+
+.scoreboard {
+  position: fixed;
+  left: 50%;
+  top: 5%;
+  transform: translateX(-50%);
+  padding: 0.35rem 0.9rem;
+  font: 600 0.95rem/1 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  letter-spacing: 0.04em;
+  color: #ffe8a3;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 0.3rem;
+  pointer-events: none;
+  white-space: nowrap;
+}

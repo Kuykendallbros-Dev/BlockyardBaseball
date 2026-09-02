@@ -20,18 +20,20 @@ import { judgeSwing, launchVelocity } from './game/swing.ts';
 import type { SwingJudgement } from './game/swing.ts';
 import { METRES_TO_FEET, carryDistance, projectilePosition } from './game/flight.ts';
 import { type Pitch, plateTarget, rollPitch } from './game/pitching.ts';
+import { classifyBallInPlay, landingFrom, resolvePitch } from './game/atbat.ts';
+import type { PitchOutcome } from './game/atbat.ts';
+import { type HalfInningState, applyPitch, newHalfInning } from './game/inning.ts';
+import { type Score, battingSide, formatScoreboard } from './game/scoreboard.ts';
 import { createSounds } from './game/audio.ts';
 import { createEffects } from './effects.ts';
+import { createRunners } from './runners.ts';
+import { BASES } from './field.ts';
 
 const FOV_DEGREES = 55;
 const CAMERA_HOME = new Vector3(0, 2.4, -5.2);
-/** Seconds the pitcher holds the ball before each pitch. */
 const WIND_TIME = 1.3;
-/** Extra seconds after the ball crosses the plate before a no-swing is a take. */
 const TAKE_GRACE = 0.22;
-/** Seconds the outcome readout stays up before the next pitch. */
-const RESULT_TIME = 1.8;
-/** Hard cap on how long a batted ball stays animated. */
+const RESULT_TIME = 1.9;
 const MAX_FLIGHT = 3.5;
 const SWING_DURATION = 0.11;
 const SWING_ANGLE = -1.5;
@@ -45,20 +47,30 @@ const ZONE_BALL = 0x4c9bff;
 type Phase = 'winding' | 'pitch' | 'result';
 
 export interface BlockyardScene {
-  /** Advance and draw one frame. */
   render: () => void;
-  /** Recompute camera + renderer for the current container size. */
   resize: () => void;
-  /** Release GPU resources and listeners. */
   dispose: () => void;
 }
 
+function tintFor(outcome: PitchOutcome): number {
+  switch (outcome.kind) {
+    case 'ball':
+      return ZONE_BALL;
+    case 'foul':
+      return ZONE_FOUL;
+    case 'called-strike':
+    case 'swinging-strike':
+      return ZONE_MISS;
+    case 'in-play':
+      return outcome.play.hit ? ZONE_HIT : ZONE_MISS;
+  }
+}
+
 /**
- * Build the Phase 0 batter's box: a fixed camera behind home plate, a pitcher
- * cube that throws a rolled pitch (type / speed / location / late break) across
- * the plate on a timer, and a spacebar swing whose timing resolves into whiff /
- * foul / contact (perfect / solid / weak) with a readout, a sound, a spark
- * burst, screen shake, a ball trail, and a carry-distance callout on a hit.
+ * Build the Phase 0 / Phase 1 batter's box: a fixed camera behind home plate, a
+ * rolled pitch each cycle, a spacebar swing, and the pure sim (`atbat` +
+ * `inning`) driving a live count, outs, baserunners on a diamond, and a
+ * scoreboard. The half-inning resets at the third out.
  */
 export function createScene(container: HTMLElement): BlockyardScene {
   const scene = new Scene();
@@ -78,10 +90,10 @@ export function createScene(container: HTMLElement): BlockyardScene {
   scene.add(sun);
 
   const ground = new Mesh(
-    new BoxGeometry(30, 1, 70),
+    new BoxGeometry(34, 1, 80),
     new MeshStandardMaterial({ color: 0x4c9a4c }),
   );
-  ground.position.set(0, -0.5, 16);
+  ground.position.set(0, -0.5, 18);
   scene.add(ground);
 
   const plate = new Mesh(
@@ -90,6 +102,13 @@ export function createScene(container: HTMLElement): BlockyardScene {
   );
   plate.position.set(0, 0.05, 0);
   scene.add(plate);
+
+  const baseMaterial = new MeshStandardMaterial({ color: 0xf2f2f2 });
+  for (let i = 1; i < BASES.length; i++) {
+    const marker = new Mesh(new BoxGeometry(0.45, 0.08, 0.45), baseMaterial);
+    marker.position.set(BASES[i][0], BASES[i][1], BASES[i][2]);
+    scene.add(marker);
+  }
 
   const batter = new Mesh(
     new BoxGeometry(1, 2, 1),
@@ -123,8 +142,13 @@ export function createScene(container: HTMLElement): BlockyardScene {
   hud.className = 'hud';
   container.appendChild(hud);
 
+  const board = document.createElement('div');
+  board.className = 'scoreboard';
+  container.appendChild(board);
+
   const sounds = createSounds();
   const effects = createEffects(scene);
+  const runners = createRunners(scene);
 
   let phase: Phase = 'winding';
   let phaseClock = 0;
@@ -142,11 +166,14 @@ export function createScene(container: HTMLElement): BlockyardScene {
   let shakeDuration = 0.3;
   let shakeMagnitude = 0;
 
+  let inningState: HalfInningState = newHalfInning();
+  let halfIndex = 0;
+  const score: Score = { away: 0, home: 0 };
+
   function setBall(p: readonly [number, number, number]): void {
     ball.position.set(p[0], p[1], p[2]);
   }
 
-  /** Ball position along the current pitch at flight fraction `u`. */
   function pitchBallAt(u: number): [number, number, number] {
     return ballPositionAt(u, plateTarget(pitch.location), pitch.lateBreak);
   }
@@ -157,7 +184,29 @@ export function createScene(container: HTMLElement): BlockyardScene {
     shakeMagnitude = magnitude;
   }
 
+  /** Fold a resolved pitch into the sim, then update score, runners, and HUD. */
+  function concludePitch(outcome: PitchOutcome, feel = ''): void {
+    const before = inningState;
+    inningState = applyPitch(inningState, outcome);
+
+    const runs = inningState.runs - before.runs;
+    if (runs > 0) {
+      score[battingSide(halfIndex)] += runs;
+      sounds.crowd('perfect');
+      shake(0.2, 0.4);
+    }
+
+    runners.setBases(inningState.bases);
+    readout = feel ? `${feel} — ${inningState.lastEvent}` : inningState.lastEvent;
+    zoneTint = tintFor(outcome);
+  }
+
   function beginWinding(): void {
+    if (inningState.over) {
+      halfIndex += 1;
+      inningState = newHalfInning();
+      runners.reset();
+    }
     phase = 'winding';
     phaseClock = 0;
     pitchClock = 0;
@@ -166,7 +215,7 @@ export function createScene(container: HTMLElement): BlockyardScene {
     ballFlying = false;
     flightClock = 0;
     swingClock = -1;
-    readout = 'SPACE to swing';
+    if (!inningState.over) readout = 'SPACE to swing';
     zoneTint = ZONE_IDLE;
     effects.clearTrail();
     setBall(RELEASE_POINT);
@@ -180,10 +229,9 @@ export function createScene(container: HTMLElement): BlockyardScene {
     readout = pitch.type;
   }
 
-  function endWithResult(tint: number): void {
+  function endWithResult(): void {
     phase = 'result';
     phaseClock = 0;
-    zoneTint = tint;
   }
 
   function swing(): void {
@@ -199,29 +247,31 @@ export function createScene(container: HTMLElement): BlockyardScene {
       ballFlying = true;
       flightClock = 0;
       const feet = Math.round(carryDistance(contactPos, battedVel) * METRES_TO_FEET);
-      const label =
+      const feel =
         quality === 'perfect'
-          ? 'PERFECT — CRACK!'
+          ? `PERFECT · ${feet} ft`
           : quality === 'solid'
-            ? 'SOLID'
-            : 'weak contact';
-      readout = `${label} · ${feet} ft`;
+            ? `SOLID · ${feet} ft`
+            : `weak · ${feet} ft`;
       sounds.crack(quality);
       sounds.crowd(quality);
-      const power = quality === 'perfect' ? 1 : quality === 'solid' ? 0.6 : 0.3;
-      effects.burst(contactPos, power);
+      effects.burst(contactPos, quality === 'perfect' ? 1 : quality === 'solid' ? 0.6 : 0.3);
       shake(quality === 'perfect' ? 0.28 : quality === 'solid' ? 0.16 : 0.08, 0.35);
+      concludePitch(
+        { kind: 'in-play', play: classifyBallInPlay(landingFrom(contactPos, battedVel)) },
+        feel,
+      );
     } else if (judgement.result === 'foul') {
-      battedVel = [error < 0 ? 4 : -4, 7, -3]; // pops up back toward the screen
+      battedVel = [error < 0 ? 4 : -4, 7, -3];
       ballFlying = true;
       flightClock = 0;
       sounds.foul();
       effects.burst(contactPos, 0.2);
       shake(0.05, 0.2);
-      readout = 'foul tip';
+      concludePitch({ kind: 'foul' });
     } else {
       sounds.whiff();
-      readout = 'WHIFF';
+      concludePitch({ kind: 'swinging-strike' });
     }
   }
 
@@ -244,24 +294,22 @@ export function createScene(container: HTMLElement): BlockyardScene {
       return;
     }
 
-    // phase === 'pitch'
     pitchClock += dt;
     if (judgement === null) {
       setBall(pitchBallAt(pitchClock / pitch.duration));
       if (pitchClock >= pitch.duration + TAKE_GRACE) {
-        readout = pitch.inZone ? 'took it — strike' : 'took it — ball';
         sounds.mitt();
-        endWithResult(pitch.inZone ? ZONE_MISS : ZONE_BALL);
+        concludePitch(resolvePitch(null, pitch.inZone));
+        endWithResult();
       }
       return;
     }
 
     if (battedVel) {
-      endWithResult(judgement.result === 'contact' ? ZONE_HIT : ZONE_FOUL);
+      endWithResult();
     } else {
-      // whiffed — let the pitch finish crossing the plate
       setBall(pitchBallAt(pitchClock / pitch.duration));
-      if (pitchClock > pitch.duration + 0.35) endWithResult(ZONE_MISS);
+      if (pitchClock > pitch.duration + 0.35) endWithResult();
     }
   }
 
@@ -291,6 +339,7 @@ export function createScene(container: HTMLElement): BlockyardScene {
     stepRound(dt);
     stepBall(dt);
     effects.update(dt);
+    runners.update(dt);
 
     if (swingClock >= 0) {
       swingClock += dt;
@@ -302,6 +351,7 @@ export function createScene(container: HTMLElement): BlockyardScene {
     stepCamera(dt);
     zoneMaterial.color.setHex(zoneTint);
     hud.textContent = readout;
+    board.textContent = formatScoreboard(halfIndex, inningState, score);
   }
 
   let last = performance.now();
@@ -332,9 +382,11 @@ export function createScene(container: HTMLElement): BlockyardScene {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('resize', resize);
       effects.dispose();
+      runners.dispose();
       renderer.dispose();
       renderer.domElement.remove();
       hud.remove();
+      board.remove();
     },
   };
 }
