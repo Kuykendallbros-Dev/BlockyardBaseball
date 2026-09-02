@@ -212,7 +212,7 @@ export function createScene(container: HTMLElement): BlockyardScene {
       effects.burst(contactPos, power);
       shake(quality === 'perfect' ? 0.28 : quality === 'solid' ? 0.16 : 0.08, 0.35);
     } else if (judgement.result === 'foul') {
-      battedVel = [error < 0 ? 4 : -4, 7, 3];
+      battedVel = [error < 0 ? 4 : -4, 7, -3]; // pops up back toward the screen
       ballFlying = true;
       flightClock = 0;
       sounds.foul();
