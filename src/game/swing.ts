@@ -48,9 +48,10 @@ function launchAngleDeg(errorSeconds: number, quality: ContactQuality): number {
 }
 
 /**
- * Batted-ball velocity (m/s) for a contact swing. Earlier contact pulls the ball
- * toward +x, later contact pushes it toward -x; quality drives launch angle and
- * speed. `errorSeconds` negative = early.
+ * Batted-ball velocity (m/s) for a contact swing. The ball travels out toward
+ * the outfield (+z, past the mound); earlier contact pulls it toward +x, later
+ * contact pushes it toward -x. Quality drives launch angle and speed.
+ * `errorSeconds` negative = early.
  */
 export function launchVelocity(
   errorSeconds: number,
@@ -65,7 +66,7 @@ export function launchVelocity(
   const horizontal = speed * Math.cos(angle);
   const vy = speed * Math.sin(angle);
   const vx = horizontal * Math.sin(spray);
-  const vz = -horizontal * Math.cos(spray); // toward the outfield (-z)
+  const vz = horizontal * Math.cos(spray); // toward the outfield (+z, past the mound)
 
   return [vx, vy, vz];
 }

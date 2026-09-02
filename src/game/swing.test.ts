@@ -35,7 +35,7 @@ describe('launchVelocity', () => {
     const [vx, vy, vz] = launchVelocity(0, 'perfect');
     expect(vx).toBeCloseTo(0);
     expect(vy).toBeGreaterThan(0);
-    expect(vz).toBeLessThan(0);
+    expect(vz).toBeGreaterThan(0); // +z is out toward the mound / outfield
   });
 
   it('pulls an early hit toward +x and pushes a late hit toward -x', () => {
