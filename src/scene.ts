@@ -11,6 +11,7 @@ import {
   PerspectiveCamera,
   Scene,
   SphereGeometry,
+  Vector3,
   WebGLRenderer,
 } from 'three';
 import { aspectRatio } from './math.ts';
@@ -22,16 +23,20 @@ import {
 } from './game/pitch.ts';
 import { judgeSwing, launchVelocity } from './game/swing.ts';
 import type { SwingJudgement } from './game/swing.ts';
-import { projectilePosition } from './game/flight.ts';
+import { METRES_TO_FEET, carryDistance, projectilePosition } from './game/flight.ts';
 import { createSounds } from './game/audio.ts';
+import { createEffects } from './effects.ts';
 
 const FOV_DEGREES = 55;
+const CAMERA_HOME = new Vector3(0, 2.4, -5.2);
 /** Seconds the pitcher holds the ball before each pitch. */
 const WIND_TIME = 1.3;
 /** No swing by this many seconds after release = the batter took the pitch. */
 const TAKE_CUTOFF = PITCH_DURATION + 0.22;
 /** Seconds the outcome readout stays up before the next pitch. */
-const RESULT_TIME = 2;
+const RESULT_TIME = 1.8;
+/** Hard cap on how long a batted ball stays animated. */
+const MAX_FLIGHT = 3.5;
 const SWING_DURATION = 0.11;
 const SWING_ANGLE = -1.5;
 
@@ -54,14 +59,16 @@ export interface BlockyardScene {
 /**
  * Build the Phase 0 batter's box: a fixed camera behind home plate, a pitcher
  * cube that lobs the ball across the plate on a timer, and a spacebar swing
- * whose timing resolves into whiff / foul / contact with a readout and a sound.
+ * whose timing resolves into whiff / foul / contact (perfect / solid / weak),
+ * each with a readout, a sound, a spark burst, screen shake, a ball trail, and
+ * a carry-distance callout on a clean hit.
  */
 export function createScene(container: HTMLElement): BlockyardScene {
   const scene = new Scene();
   scene.background = new Color(0x8ec5ff);
 
   const camera = new PerspectiveCamera(FOV_DEGREES, 1, 0.1, 500);
-  camera.position.set(0, 2.4, -5.2);
+  camera.position.copy(CAMERA_HOME);
   camera.lookAt(0, 1.4, 8);
 
   const renderer = new WebGLRenderer({ antialias: true });
@@ -101,10 +108,10 @@ export function createScene(container: HTMLElement): BlockyardScene {
   pitcher.position.set(0, 1.3, RELEASE_POINT[2] + 0.9);
   scene.add(pitcher);
 
-  const zoneMat = new LineBasicMaterial({ color: ZONE_IDLE });
+  const zoneMaterial = new LineBasicMaterial({ color: ZONE_IDLE });
   const zone = new LineSegments(
     new EdgesGeometry(new BoxGeometry(0.9, 1.1, 0.05)),
-    zoneMat,
+    zoneMaterial,
   );
   zone.position.set(PLATE_POINT[0], PLATE_POINT[1], PLATE_POINT[2]);
   scene.add(zone);
@@ -120,20 +127,31 @@ export function createScene(container: HTMLElement): BlockyardScene {
   container.appendChild(hud);
 
   const sounds = createSounds();
+  const effects = createEffects(scene);
 
   let phase: Phase = 'winding';
   let phaseClock = 0;
   let pitchClock = 0;
   let judgement: SwingJudgement | null = null;
-  let contactClock = 0;
   let contactPos: [number, number, number] = [0, 0, 0];
   let battedVel: [number, number, number] | null = null;
+  let flightClock = 0;
+  let ballFlying = false;
   let swingClock = -1;
   let readout = 'SPACE to swing';
   let zoneTint = ZONE_IDLE;
+  let shakeClock = 1;
+  let shakeDuration = 0.3;
+  let shakeMagnitude = 0;
 
   function setBall(p: readonly [number, number, number]): void {
     ball.position.set(p[0], p[1], p[2]);
+  }
+
+  function shake(magnitude: number, duration: number): void {
+    shakeClock = 0;
+    shakeDuration = duration;
+    shakeMagnitude = magnitude;
   }
 
   function beginWinding(): void {
@@ -142,9 +160,12 @@ export function createScene(container: HTMLElement): BlockyardScene {
     pitchClock = 0;
     judgement = null;
     battedVel = null;
+    ballFlying = false;
+    flightClock = 0;
     swingClock = -1;
     readout = 'SPACE to swing';
     zoneTint = ZONE_IDLE;
+    effects.clearTrail();
     setBall(RELEASE_POINT);
   }
 
@@ -166,21 +187,33 @@ export function createScene(container: HTMLElement): BlockyardScene {
     const error = pitchClock - PITCH_DURATION;
     swingClock = 0;
     judgement = judgeSwing(error);
-    contactClock = pitchClock;
     contactPos = ballPositionAt(pitchClock / PITCH_DURATION);
 
     if (judgement.result === 'contact' && judgement.quality) {
-      battedVel = launchVelocity(error, judgement.quality);
-      sounds.crack(judgement.quality);
-      readout =
-        judgement.quality === 'perfect'
+      const quality = judgement.quality;
+      battedVel = launchVelocity(error, quality);
+      ballFlying = true;
+      flightClock = 0;
+      const feet = Math.round(carryDistance(contactPos, battedVel) * METRES_TO_FEET);
+      const label =
+        quality === 'perfect'
           ? 'PERFECT — CRACK!'
-          : judgement.quality === 'solid'
-            ? 'SOLID CONTACT'
+          : quality === 'solid'
+            ? 'SOLID'
             : 'weak contact';
+      readout = `${label} · ${feet} ft`;
+      sounds.crack(quality);
+      sounds.crowd(quality);
+      const power = quality === 'perfect' ? 1 : quality === 'solid' ? 0.6 : 0.3;
+      effects.burst(contactPos, power);
+      shake(quality === 'perfect' ? 0.28 : quality === 'solid' ? 0.16 : 0.08, 0.35);
     } else if (judgement.result === 'foul') {
       battedVel = [error < 0 ? 4 : -4, 7, 3];
+      ballFlying = true;
+      flightClock = 0;
       sounds.foul();
+      effects.burst(contactPos, 0.2);
+      shake(0.05, 0.2);
       readout = 'foul tip';
     } else {
       sounds.whiff();
@@ -195,35 +228,65 @@ export function createScene(container: HTMLElement): BlockyardScene {
     else swing();
   }
 
-  function step(dt: number): void {
-    phaseClock += dt;
-
+  function stepRound(dt: number): void {
     if (phase === 'winding') {
       setBall(RELEASE_POINT);
       if (phaseClock >= WIND_TIME) beginPitch();
-    } else if (phase === 'pitch') {
-      pitchClock += dt;
-      if (battedVel) {
-        const flight = pitchClock - contactClock;
-        setBall(projectilePosition(contactPos, battedVel, flight));
-        if (ball.position.y <= 0.12 || flight > 2.2) {
-          endWithResult(
-            judgement?.result === 'contact' ? ZONE_HIT : ZONE_FOUL,
-          );
-        }
-      } else if (judgement) {
-        setBall(ballPositionAt(pitchClock / PITCH_DURATION));
-        if (pitchClock > PITCH_DURATION + 0.35) endWithResult(ZONE_MISS);
-      } else {
-        setBall(ballPositionAt(pitchClock / PITCH_DURATION));
-        if (pitchClock >= TAKE_CUTOFF) {
-          readout = 'took it';
-          endWithResult(ZONE_MISS);
-        }
-      }
-    } else if (phaseClock >= RESULT_TIME) {
-      beginWinding();
+      return;
     }
+
+    if (phase === 'result') {
+      if (phaseClock >= RESULT_TIME && !ballFlying) beginWinding();
+      return;
+    }
+
+    // phase === 'pitch'
+    pitchClock += dt;
+    if (judgement === null) {
+      setBall(ballPositionAt(pitchClock / PITCH_DURATION));
+      if (pitchClock >= TAKE_CUTOFF) {
+        readout = 'took it';
+        sounds.mitt();
+        endWithResult(ZONE_MISS);
+      }
+      return;
+    }
+
+    if (battedVel) {
+      endWithResult(judgement.result === 'contact' ? ZONE_HIT : ZONE_FOUL);
+    } else {
+      // whiffed — let the pitch finish crossing the plate
+      setBall(ballPositionAt(pitchClock / PITCH_DURATION));
+      if (pitchClock > PITCH_DURATION + 0.35) endWithResult(ZONE_MISS);
+    }
+  }
+
+  function stepBall(dt: number): void {
+    if (!ballFlying || !battedVel) {
+      if (phase !== 'pitch') effects.clearTrail();
+      return;
+    }
+    flightClock += dt;
+    setBall(projectilePosition(contactPos, battedVel, flightClock));
+    effects.trackBall([ball.position.x, ball.position.y, ball.position.z]);
+    if (ball.position.y <= 0.12 || flightClock > MAX_FLIGHT) ballFlying = false;
+  }
+
+  function stepCamera(dt: number): void {
+    camera.position.copy(CAMERA_HOME);
+    if (shakeClock < shakeDuration) {
+      shakeClock += dt;
+      const k = (1 - shakeClock / shakeDuration) * shakeMagnitude;
+      camera.position.x += (Math.random() * 2 - 1) * k;
+      camera.position.y += (Math.random() * 2 - 1) * k;
+    }
+  }
+
+  function step(dt: number): void {
+    phaseClock += dt;
+    stepRound(dt);
+    stepBall(dt);
+    effects.update(dt);
 
     if (swingClock >= 0) {
       swingClock += dt;
@@ -232,7 +295,8 @@ export function createScene(container: HTMLElement): BlockyardScene {
       batter.rotation.y = 0;
     }
 
-    zoneMat.color.setHex(zoneTint);
+    stepCamera(dt);
+    zoneMaterial.color.setHex(zoneTint);
     hud.textContent = readout;
   }
 
@@ -263,6 +327,7 @@ export function createScene(container: HTMLElement): BlockyardScene {
     dispose: () => {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('resize', resize);
+      effects.dispose();
       renderer.dispose();
       renderer.domElement.remove();
       hud.remove();
