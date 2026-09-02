@@ -23,10 +23,12 @@ import { type Pitch, plateTarget, rollPitch } from './game/pitching.ts';
 import { classifyBallInPlay, landingFrom, resolvePitch } from './game/atbat.ts';
 import type { PitchOutcome } from './game/atbat.ts';
 import { formatScoreboard } from './game/scoreboard.ts';
+import type { TeamNames } from './game/scoreboard.ts';
 import { type GameState, applyPitchToGame, newGame } from './game/game.ts';
 import { createSounds } from './game/audio.ts';
 import { createEffects } from './effects.ts';
 import { createRunners } from './runners.ts';
+import { createMenu } from './menu.ts';
 import { BASES } from './field.ts';
 
 const FOV_DEGREES = 55;
@@ -45,6 +47,7 @@ const ZONE_MISS = 0xff3b30;
 const ZONE_BALL = 0x4c9bff;
 
 type Phase = 'winding' | 'pitch' | 'result';
+type Screen = 'menu' | 'playing' | 'paused';
 
 export interface BlockyardScene {
   render: () => void;
@@ -69,10 +72,10 @@ function tintFor(outcome: PitchOutcome): number {
 }
 
 /**
- * Build the batter's box: a fixed camera behind home plate, a rolled pitch each
- * cycle, a spacebar swing, and the pure sim (`atbat` → `inning` → `game`)
- * driving a live count, outs, baserunners on a diamond, a scoreboard, and a
- * full nine-inning game with a win screen and "play again".
+ * Build the whole game: a Quick Play menu, the batter's box (fixed camera behind
+ * home plate, a rolled pitch each cycle, a spacebar swing), the pure sim
+ * (`atbat` → `inning` → `game`) driving a live count, outs, baserunners, and a
+ * scoreboard, a full nine-inning game with a win screen, pause, and play again.
  */
 export function createScene(container: HTMLElement): BlockyardScene {
   const scene = new Scene();
@@ -153,9 +156,19 @@ export function createScene(container: HTMLElement): BlockyardScene {
   overlay.hidden = true;
   container.appendChild(overlay);
 
+  const pausePanel = document.createElement('div');
+  pausePanel.className = 'gameover';
+  pausePanel.hidden = true;
+  pausePanel.textContent = 'PAUSED  ·  R resume  ·  M menu';
+  container.appendChild(pausePanel);
+
   const sounds = createSounds();
   const effects = createEffects(scene);
   const runners = createRunners(scene);
+  const menu = createMenu(container);
+
+  let screen: Screen = 'menu';
+  let teams: TeamNames = { away: 'Away', home: 'Home' };
 
   let phase: Phase = 'winding';
   let phaseClock = 0;
@@ -194,7 +207,6 @@ export function createScene(container: HTMLElement): BlockyardScene {
     return state.score.away + state.score.home;
   }
 
-  /** Fold a resolved pitch into the game, then update score, runners, and HUD. */
   function concludePitch(outcome: PitchOutcome, feel = ''): void {
     const before = game;
     game = applyPitchToGame(game, outcome);
@@ -211,8 +223,8 @@ export function createScene(container: HTMLElement): BlockyardScene {
     zoneTint = tintFor(outcome);
 
     if (game.final) {
-      const who = game.winner === 'home' ? 'HOME' : 'AWAY';
-      overlay.textContent = `${who} WINS  ${game.score.away}–${game.score.home}  ·  SPACE to play again`;
+      const who = game.winner === 'home' ? teams.home : teams.away;
+      overlay.textContent = `${who.toUpperCase()} WINS  ${game.score.away}–${game.score.home}  ·  SPACE play again  ·  M menu`;
       overlay.hidden = false;
     }
   }
@@ -249,12 +261,23 @@ export function createScene(container: HTMLElement): BlockyardScene {
     phaseClock = 0;
   }
 
-  function restart(): void {
+  function startGame(): void {
+    teams = menu.names();
+    menu.hide();
+    overlay.hidden = true;
+    pausePanel.hidden = true;
     game = newGame();
     pendingHalfReset = false;
     runners.reset();
-    overlay.hidden = true;
+    screen = 'playing';
     beginWinding();
+  }
+
+  function toMenu(): void {
+    screen = 'menu';
+    overlay.hidden = true;
+    pausePanel.hidden = true;
+    menu.show();
   }
 
   function swing(): void {
@@ -299,14 +322,51 @@ export function createScene(container: HTMLElement): BlockyardScene {
   }
 
   function onKeyDown(e: KeyboardEvent): void {
-    if (e.code !== 'Space') return;
-    e.preventDefault();
-    if (game.final) {
-      restart();
+    const k = e.code;
+
+    if (screen === 'menu') {
+      if (k === 'Enter') {
+        e.preventDefault();
+        startGame();
+      }
       return;
     }
-    if (phase === 'winding') beginPitch();
-    else swing();
+
+    if (screen === 'paused') {
+      if (k === 'KeyR' || k === 'Escape') {
+        e.preventDefault();
+        screen = 'playing';
+        pausePanel.hidden = true;
+      } else if (k === 'KeyM') {
+        e.preventDefault();
+        toMenu();
+      }
+      return;
+    }
+
+    // screen === 'playing'
+    if (game.final) {
+      if (k === 'Space') {
+        e.preventDefault();
+        startGame();
+      } else if (k === 'KeyM') {
+        e.preventDefault();
+        toMenu();
+      }
+      return;
+    }
+
+    if (k === 'Escape') {
+      e.preventDefault();
+      screen = 'paused';
+      pausePanel.hidden = false;
+      return;
+    }
+    if (k === 'Space') {
+      e.preventDefault();
+      if (phase === 'winding') beginPitch();
+      else swing();
+    }
   }
 
   function stepRound(dt: number): void {
@@ -362,9 +422,11 @@ export function createScene(container: HTMLElement): BlockyardScene {
   }
 
   function step(dt: number): void {
-    phaseClock += dt;
-    if (!game.final) stepRound(dt);
-    stepBall(dt);
+    if (screen === 'playing') {
+      phaseClock += dt;
+      if (!game.final) stepRound(dt);
+      stepBall(dt);
+    }
     effects.update(dt);
     runners.update(dt);
 
@@ -377,10 +439,14 @@ export function createScene(container: HTMLElement): BlockyardScene {
 
     stepCamera(dt);
     zoneMaterial.color.setHex(zoneTint);
-    hud.textContent = game.final ? '' : readout;
-    board.textContent = game.final
-      ? `FINAL  ·  AWAY ${game.score.away}  HOME ${game.score.home}`
-      : formatScoreboard(game.halfIndex, game.half, game.score);
+
+    hud.textContent = screen === 'playing' && !game.final ? readout : '';
+    board.textContent =
+      screen === 'menu'
+        ? ''
+        : game.final
+          ? `FINAL  ·  ${teams.away.toUpperCase()} ${game.score.away}  ${teams.home.toUpperCase()} ${game.score.home}`
+          : formatScoreboard(game.halfIndex, game.half, game.score, teams);
   }
 
   let last = performance.now();
@@ -399,6 +465,8 @@ export function createScene(container: HTMLElement): BlockyardScene {
     camera.updateProjectionMatrix();
   }
 
+  menu.onPlay(startGame);
+  menu.show();
   window.addEventListener('keydown', onKeyDown);
   window.addEventListener('resize', resize);
   beginWinding();
@@ -417,6 +485,8 @@ export function createScene(container: HTMLElement): BlockyardScene {
       hud.remove();
       board.remove();
       overlay.remove();
+      pausePanel.remove();
+      menu.element.remove();
     },
   };
 }

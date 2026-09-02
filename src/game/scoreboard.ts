@@ -11,6 +11,13 @@ export interface Score {
   home: number;
 }
 
+export interface TeamNames {
+  away: string;
+  home: string;
+}
+
+const DEFAULT_TEAMS: TeamNames = { away: 'AWAY', home: 'HOME' };
+
 /** The away team bats in the top half, the home team in the bottom. */
 export type BattingSide = 'away' | 'home';
 
@@ -48,8 +55,8 @@ export function basesLabel(bases: BaseState): string {
   return 'runner on 3rd';
 }
 
-export function scoreLabel(score: Score): string {
-  return `AWAY ${score.away}  HOME ${score.home}`;
+export function scoreLabel(score: Score, teams: TeamNames = DEFAULT_TEAMS): string {
+  return `${teams.away.toUpperCase()} ${score.away}  ${teams.home.toUpperCase()} ${score.home}`;
 }
 
 /** The full one-line scoreboard. */
@@ -57,12 +64,13 @@ export function formatScoreboard(
   halfIndex: number,
   state: HalfInningState,
   score: Score,
+  teams: TeamNames = DEFAULT_TEAMS,
 ): string {
   return [
     halfInningLabel(halfIndex),
     countLabel(state.balls, state.strikes),
     outsLabel(state.outs),
     basesLabel(state.bases),
-    scoreLabel(score),
+    scoreLabel(score, teams),
   ].join('  ·  ');
 }
