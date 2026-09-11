@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { afterEach, describe, expect, it } from 'vitest';
 import { MAX_LEVEL, MIN_LEVEL } from './game/attributes.ts';
+import { GEAR_CATALOG } from './game/gear.ts';
 import { createMenu } from './menu.ts';
 
 afterEach(() => {
@@ -51,6 +52,28 @@ describe('createMenu', () => {
 
     level.value = 'not a number';
     expect(menu.level()).toBe(Math.round((MIN_LEVEL + MAX_LEVEL) / 2));
+  });
+
+  it('defaults to no gear, lists the catalog, and reads the chosen id', () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const menu = createMenu(host);
+    const gear = host.querySelector<HTMLSelectElement>('.menu-gear');
+    if (!gear) throw new Error('gear select missing');
+
+    expect(menu.gearChoice()).toBe('');
+    expect(gear.options.length).toBe(GEAR_CATALOG.length + 1); // + "None"
+
+    gear.value = GEAR_CATALOG[0].id;
+    expect(menu.gearChoice()).toBe(GEAR_CATALOG[0].id);
+  });
+
+  it('displays the coin balance passed to setWallet', () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const menu = createMenu(host);
+    menu.setWallet(275);
+    expect(host.querySelector('.menu-wallet')?.textContent).toContain('275');
   });
 
   it('fires the play handler when the button is clicked', () => {
