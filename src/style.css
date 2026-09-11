@@ -134,6 +134,14 @@ body,
   width: 4rem;
 }
 
+.menu-pass {
+  font: 700 0.85rem system-ui, sans-serif;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  opacity: 0.85;
+  margin: 0.4rem 0 0;
+}
+
 .menu-loadout {
   display: flex;
   align-items: center;
