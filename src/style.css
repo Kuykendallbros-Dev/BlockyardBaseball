@@ -130,6 +130,10 @@ body,
   border-radius: 0.3rem;
 }
 
+.menu-teams input.menu-level {
+  width: 4rem;
+}
+
 .menu-play {
   padding: 0.7rem 1.8rem;
   font: 700 1.1rem system-ui, sans-serif;
