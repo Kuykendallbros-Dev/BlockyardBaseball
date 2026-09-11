@@ -1,11 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import {
-  classifyBallInPlay,
-  landingFrom,
-  resolvePitch,
-  type Landing,
-} from './atbat.ts';
+import { landingFrom, resolvePitch, type Landing } from './atbat.ts';
 import { launchVelocity } from './swing.ts';
+
+const alwaysHit = () => 0.99; // borderline plays fall for hits
+const alwaysCaught = () => 0; // borderline plays are caught
 
 describe('resolvePitch', () => {
   it('is a called strike on a take in the zone', () => {
@@ -28,11 +26,11 @@ describe('resolvePitch', () => {
     });
   });
 
-  it('classifies a contact swing from its landing', () => {
-    const landing: Landing = { distanceFt: 400, launchAngleDeg: 28 };
-    expect(resolvePitch({ result: 'contact', quality: 'perfect' }, true, landing)).toEqual(
-      { kind: 'in-play', play: { hit: true, bases: 4, label: 'home run' } },
-    );
+  it('turns a towering fly over the fence into a home run', () => {
+    const landing: Landing = { distanceFt: 400, launchAngleDeg: 28, bearingDeg: 5 };
+    expect(
+      resolvePitch({ result: 'contact', quality: 'perfect' }, true, landing),
+    ).toEqual({ kind: 'in-play', play: { hit: true, bases: 4, label: 'home run' } });
   });
 
   it('throws when a contact swing has no landing', () => {
@@ -40,32 +38,16 @@ describe('resolvePitch', () => {
       resolvePitch({ result: 'contact', quality: 'solid' }, true),
     ).toThrow(/landing/);
   });
-});
 
-describe('classifyBallInPlay', () => {
-  const cases: [Landing, string][] = [
-    [{ distanceFt: 380, launchAngleDeg: 30 }, 'home run'],
-    [{ distanceFt: 250, launchAngleDeg: 30 }, 'flyout'], // right angle, not deep enough
-    [{ distanceFt: 35, launchAngleDeg: 6 }, 'groundout'],
-    [{ distanceFt: 120, launchAngleDeg: 5 }, 'single'],
-    [{ distanceFt: 60, launchAngleDeg: 18 }, 'lineout'],
-    [{ distanceFt: 150, launchAngleDeg: 18 }, 'single'],
-    [{ distanceFt: 260, launchAngleDeg: 20 }, 'double'],
-    [{ distanceFt: 310, launchAngleDeg: 22 }, 'triple'],
-    [{ distanceFt: 200, launchAngleDeg: 38 }, 'flyout'],
-    [{ distanceFt: 300, launchAngleDeg: 38 }, 'double'],
-    [{ distanceFt: 40, launchAngleDeg: 70 }, 'popout'],
-  ];
-
-  for (const [landing, label] of cases) {
-    it(`${landing.distanceFt} ft at ${landing.launchAngleDeg}° -> ${label}`, () => {
-      expect(classifyBallInPlay(landing).label).toBe(label);
-    });
-  }
-
-  it('marks hits as hit and outs as not', () => {
-    expect(classifyBallInPlay({ distanceFt: 380, launchAngleDeg: 30 }).hit).toBe(true);
-    expect(classifyBallInPlay({ distanceFt: 200, launchAngleDeg: 38 }).hit).toBe(false);
+  it('lets `rand` decide a ball hit at the edge of a fielder\'s reach', () => {
+    // Toward 2B, just past his read-and-reach at "hard" — a genuine toss-up
+    // between a diving stop and a ball skipping through into the outfield.
+    const gapper: Landing = { distanceFt: 165, launchAngleDeg: 14, bearingDeg: 13 };
+    const contact = { result: 'contact', quality: 'solid' } as const;
+    const caught = resolvePitch(contact, true, gapper, alwaysCaught);
+    const dropped = resolvePitch(contact, true, gapper, alwaysHit);
+    expect(caught.kind === 'in-play' && caught.play.hit).toBe(false);
+    expect(dropped.kind === 'in-play' && dropped.play.hit).toBe(true);
   });
 });
 
@@ -76,16 +58,15 @@ describe('landingFrom', () => {
     expect(distanceFt).toBeLessThan(3);
   });
 
-  it('turns a dead-on perfect swing into a home run', () => {
-    const landing = landingFrom([0, 1, 0.6], launchVelocity(0, 'perfect'));
-    expect(classifyBallInPlay(landing).label).toBe('home run');
+  it('reads spray bearing from sideways velocity', () => {
+    expect(landingFrom([0, 1, 0.6], [0, 8, 20]).bearingDeg).toBeCloseTo(0, 1);
+    expect(landingFrom([0, 1, 0.6], [10, 8, 20]).bearingDeg).toBeGreaterThan(15);
+    expect(landingFrom([0, 1, 0.6], [-10, 8, 20]).bearingDeg).toBeLessThan(-15);
   });
 
-  it('turns a weak early swing into an infield ground ball', () => {
-    const landing = landingFrom([0, 1, 0.6], launchVelocity(-0.12, 'weak'));
-    expect(landing.launchAngleDeg).toBeLessThan(10);
-    expect(classifyBallInPlay(landing).hit === false || landing.distanceFt < 130).toBe(
-      true,
-    );
+  it('turns a dead-on perfect swing into a deep drive', () => {
+    const landing = landingFrom([0, 1, 0.6], launchVelocity(0, 'perfect'));
+    expect(landing.distanceFt).toBeGreaterThan(330);
+    expect(landing.launchAngleDeg).toBeGreaterThan(18);
   });
 });
