@@ -76,6 +76,18 @@ describe('createMenu', () => {
     expect(host.querySelector('.menu-wallet')?.textContent).toContain('275');
   });
 
+  it('displays the battle-pass progress passed to setPass', () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const menu = createMenu(host);
+
+    menu.setPass({ level: 3, intoLevel: 40, needed: 100, maxed: false });
+    expect(host.querySelector('.menu-pass')?.textContent).toBe('Pass Lv 3 · 40/100');
+
+    menu.setPass({ level: 10, intoLevel: 100, needed: 100, maxed: true });
+    expect(host.querySelector('.menu-pass')?.textContent).toBe('Pass Lv 10 · MAX');
+  });
+
   it('fires the play handler when the button is clicked', () => {
     const host = document.createElement('div');
     document.body.appendChild(host);

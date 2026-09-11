@@ -6,6 +6,7 @@
 
 import { MAX_LEVEL, MIN_LEVEL } from './game/attributes.ts';
 import { GEAR_CATALOG } from './game/gear.ts';
+import type { PassProgress } from './game/pass.ts';
 import type { TeamNames } from './game/scoreboard.ts';
 
 /** Midpoint of the level range — an average, baseline-attribute player. */
@@ -24,6 +25,8 @@ export interface Menu {
   gearChoice: () => string;
   /** Update the displayed coin balance. */
   setWallet: (balance: number) => void;
+  /** Update the displayed battle-pass progress. */
+  setPass: (progress: PassProgress) => void;
   /** Register the handler fired by the play button. */
   onPlay: (handler: () => void) => void;
 }
@@ -44,6 +47,7 @@ export function createMenu(container: HTMLElement): Menu {
         <input class="menu-level" type="number" min="${MIN_LEVEL}" max="${MAX_LEVEL}" value="${DEFAULT_LEVEL}" />
       </label>
     </div>
+    <p class="menu-pass">Pass Lv 1 · 0/100</p>
     <div class="menu-loadout">
       <p class="menu-wallet">Coins: 0</p>
       <label>Gear
@@ -63,8 +67,9 @@ export function createMenu(container: HTMLElement): Menu {
   const level = root.querySelector<HTMLInputElement>('.menu-level');
   const gear = root.querySelector<HTMLSelectElement>('.menu-gear');
   const wallet = root.querySelector<HTMLElement>('.menu-wallet');
+  const pass = root.querySelector<HTMLElement>('.menu-pass');
   const play = root.querySelector<HTMLButtonElement>('.menu-play');
-  if (!away || !home || !level || !gear || !wallet || !play) {
+  if (!away || !home || !level || !gear || !wallet || !pass || !play) {
     throw new Error('menu: markup missing');
   }
 
@@ -93,6 +98,12 @@ export function createMenu(container: HTMLElement): Menu {
     gearChoice: () => gear.value,
     setWallet: (balance) => {
       wallet.textContent = `Coins: ${balance}`;
+    },
+    setPass: (progress) => {
+      const label = progress.maxed
+        ? `Pass Lv ${progress.level} · MAX`
+        : `Pass Lv ${progress.level} · ${progress.intoLevel}/${progress.needed}`;
+      pass.textContent = label;
     },
     onPlay: (h) => {
       handler = h;

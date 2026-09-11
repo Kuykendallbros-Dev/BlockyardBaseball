@@ -28,6 +28,7 @@ import {
 import type { Attributes } from './game/attributes.ts';
 import { applyGear, findGear } from './game/gear.ts';
 import { createWallet, payoutFor } from './game/wallet.ts';
+import { applyPassGain, newPass, pointsFor, progressFor } from './game/pass.ts';
 import { METRES_TO_FEET, carryDistance, projectilePosition } from './game/flight.ts';
 import { type Pitch, plateTarget, rollPitch } from './game/pitching.ts';
 import { landingFrom, resolvePitch } from './game/atbat.ts';
@@ -189,7 +190,9 @@ export function createScene(container: HTMLElement): BlockyardScene {
   // visit to the menu, not only after grinding a payout.
   const wallet = createWallet(200);
   const ownedGear = new Set<string>();
+  let pass = newPass();
   menu.setWallet(wallet.balance());
+  menu.setPass(progressFor(pass.points));
 
   let screen: Screen = 'menu';
   let teams: TeamNames = { away: 'Away', home: 'Home' };
@@ -260,7 +263,11 @@ export function createScene(container: HTMLElement): BlockyardScene {
       overlay.textContent = `${who.toUpperCase()} WINS  ${game.score.away}–${game.score.home}  ·  SPACE play again  ·  M menu`;
       overlay.hidden = false;
       wallet.credit(payoutFor(game, HUMAN_SIDE));
+      const gain = applyPassGain(pass, pointsFor(game, HUMAN_SIDE));
+      pass = gain.state;
+      wallet.credit(gain.coinsAwarded);
       menu.setWallet(wallet.balance());
+      menu.setPass(progressFor(pass.points));
     }
   }
 
