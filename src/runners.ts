@@ -41,6 +41,11 @@ export interface Runners {
   /** Clear every runner (start of a half-inning). */
   reset: () => void;
   update: (dt: number) => void;
+  /**
+   * Scale how fast runners cross the basepaths — the visible face of the
+   * `speed` attribute (see `game/attributes.ts`). 1 = the default pace.
+   */
+  setSpeedMultiplier: (multiplier: number) => void;
   dispose: () => void;
 }
 
@@ -59,6 +64,7 @@ export function createRunners(scene: Scene): Runners {
 
   let slots: (Slot | null)[] = [null, null, null];
   const moves: Move[] = [];
+  let speedMultiplier = 1;
 
   const material = (mesh: Mesh): MeshStandardMaterial =>
     mesh.material as MeshStandardMaterial;
@@ -135,12 +141,13 @@ export function createRunners(scene: Scene): Runners {
   }
 
   function update(dt: number): void {
+    const advanceTime = ADVANCE_TIME / speedMultiplier;
     for (let i = moves.length - 1; i >= 0; i--) {
       const move = moves[i];
 
       if (move.fade === 0) {
         move.clock += dt;
-        const t = Math.min(move.clock / ADVANCE_TIME, 1);
+        const t = Math.min(move.clock / advanceTime, 1);
         move.mesh.position.lerpVectors(move.from, move.to, t);
         move.mesh.position.y = move.to.y + Math.sin(t * Math.PI) * 0.25;
         if (t >= 1) {
@@ -166,5 +173,13 @@ export function createRunners(scene: Scene): Runners {
     geometry.dispose();
   }
 
-  return { setBases, reset, update, dispose };
+  return {
+    setBases,
+    reset,
+    update,
+    setSpeedMultiplier: (multiplier: number) => {
+      speedMultiplier = multiplier > 0 ? multiplier : 1;
+    },
+    dispose,
+  };
 }

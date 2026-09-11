@@ -28,6 +28,17 @@ describe('judgeSwing', () => {
       quality: null,
     });
   });
+
+  it('a higher contactMultiplier forgives timing that would otherwise whiff', () => {
+    const error = WINDOWS.foul + 0.02;
+    expect(judgeSwing(error).result).toBe('whiff');
+    expect(judgeSwing(error, 1.4).result).not.toBe('whiff');
+  });
+
+  it('a lower contactMultiplier punishes timing that would otherwise connect', () => {
+    expect(judgeSwing(WINDOWS.perfect).quality).toBe('perfect');
+    expect(judgeSwing(WINDOWS.perfect, 0.6).quality).not.toBe('perfect');
+  });
 });
 
 describe('launchVelocity', () => {
@@ -48,5 +59,12 @@ describe('launchVelocity', () => {
     expect(speed(launchVelocity(0, 'perfect'))).toBeGreaterThan(
       speed(launchVelocity(0, 'weak')),
     );
+  });
+
+  it('scales exit speed by powerMultiplier', () => {
+    const speed = (v: [number, number, number]) => Math.hypot(...v);
+    const base = speed(launchVelocity(0, 'solid'));
+    expect(speed(launchVelocity(0, 'solid', 1.4))).toBeGreaterThan(base);
+    expect(speed(launchVelocity(0, 'solid', 0.6))).toBeLessThan(base);
   });
 });

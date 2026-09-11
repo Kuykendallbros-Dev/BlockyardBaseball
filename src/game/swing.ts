@@ -21,8 +21,16 @@ export const WINDOWS = {
   foul: 0.22,
 } as const;
 
-export function judgeSwing(errorSeconds: number): SwingJudgement {
-  const e = Math.abs(errorSeconds);
+/**
+ * `contactMultiplier` (default 1, an average `contact` attribute) scales how
+ * forgiving the timing windows are: above 1 widens them, below 1 narrows
+ * them. See `game/attributes.ts`.
+ */
+export function judgeSwing(
+  errorSeconds: number,
+  contactMultiplier = 1,
+): SwingJudgement {
+  const e = Math.abs(errorSeconds) / contactMultiplier;
   if (e <= WINDOWS.perfect) return { result: 'contact', quality: 'perfect' };
   if (e <= WINDOWS.solid) return { result: 'contact', quality: 'solid' };
   if (e <= WINDOWS.contact) return { result: 'contact', quality: 'weak' };
@@ -51,13 +59,15 @@ function launchAngleDeg(errorSeconds: number, quality: ContactQuality): number {
  * Batted-ball velocity (m/s) for a contact swing. The ball travels out toward
  * the outfield (+z, past the mound); earlier contact pulls it toward +x, later
  * contact pushes it toward -x. Quality drives launch angle and speed.
- * `errorSeconds` negative = early.
+ * `errorSeconds` negative = early. `powerMultiplier` (default 1, an average
+ * `power` attribute) scales exit speed — see `game/attributes.ts`.
  */
 export function launchVelocity(
   errorSeconds: number,
   quality: ContactQuality,
+  powerMultiplier = 1,
 ): [number, number, number] {
-  const speed = EXIT_SPEED[quality];
+  const speed = EXIT_SPEED[quality] * powerMultiplier;
   const angle = (launchAngleDeg(errorSeconds, quality) * Math.PI) / 180;
 
   // spray: -0.35s..+0.35s of error maps to roughly -35deg..+35deg of pull/push

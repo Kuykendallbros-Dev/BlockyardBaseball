@@ -4,7 +4,11 @@
  * what happens on play.
  */
 
+import { MAX_LEVEL, MIN_LEVEL } from './game/attributes.ts';
 import type { TeamNames } from './game/scoreboard.ts';
+
+/** Midpoint of the level range — an average, baseline-attribute player. */
+const DEFAULT_LEVEL = Math.round((MIN_LEVEL + MAX_LEVEL) / 2);
 
 export interface Menu {
   readonly element: HTMLElement;
@@ -12,6 +16,8 @@ export interface Menu {
   hide: () => void;
   /** Current team names, trimmed, with fallbacks. */
   names: () => TeamNames;
+  /** Chosen level for the human batter, clamped to [MIN_LEVEL, MAX_LEVEL]. */
+  level: () => number;
   /** Register the handler fired by the play button. */
   onPlay: (handler: () => void) => void;
 }
@@ -25,6 +31,9 @@ export function createMenu(container: HTMLElement): Menu {
     <div class="menu-teams">
       <label>Away <input class="menu-away" maxlength="10" value="Away" spellcheck="false" /></label>
       <label>Home <input class="menu-home" maxlength="10" value="Home" spellcheck="false" /></label>
+      <label>Your level
+        <input class="menu-level" type="number" min="${MIN_LEVEL}" max="${MAX_LEVEL}" value="${DEFAULT_LEVEL}" />
+      </label>
     </div>
     <button class="menu-play" type="button">Play ball</button>
     <p class="menu-hint">space to swing &nbsp;·&nbsp; esc to pause</p>
@@ -33,8 +42,9 @@ export function createMenu(container: HTMLElement): Menu {
 
   const away = root.querySelector<HTMLInputElement>('.menu-away');
   const home = root.querySelector<HTMLInputElement>('.menu-home');
+  const level = root.querySelector<HTMLInputElement>('.menu-level');
   const play = root.querySelector<HTMLButtonElement>('.menu-play');
-  if (!away || !home || !play) throw new Error('menu: markup missing');
+  if (!away || !home || !level || !play) throw new Error('menu: markup missing');
 
   let handler: () => void = () => {};
   play.addEventListener('click', () => {
@@ -53,6 +63,11 @@ export function createMenu(container: HTMLElement): Menu {
       away: away.value.trim() || 'Away',
       home: home.value.trim() || 'Home',
     }),
+    level: () => {
+      const n = Number.parseInt(level.value, 10);
+      if (Number.isNaN(n)) return DEFAULT_LEVEL;
+      return Math.min(MAX_LEVEL, Math.max(MIN_LEVEL, n));
+    },
     onPlay: (h) => {
       handler = h;
     },

@@ -18,6 +18,14 @@ import { aspectRatio } from './math.ts';
 import { PLATE_POINT, RELEASE_POINT, ballPositionAt } from './game/pitch.ts';
 import { judgeSwing, launchVelocity } from './game/swing.ts';
 import type { SwingJudgement } from './game/swing.ts';
+import {
+  BASELINE_ATTRIBUTES,
+  attributesForLevel,
+  contactMultiplier,
+  powerMultiplier,
+  speedMultiplier,
+} from './game/attributes.ts';
+import type { Attributes } from './game/attributes.ts';
 import { METRES_TO_FEET, carryDistance, projectilePosition } from './game/flight.ts';
 import { type Pitch, plateTarget, rollPitch } from './game/pitching.ts';
 import { landingFrom, resolvePitch } from './game/atbat.ts';
@@ -194,6 +202,7 @@ export function createScene(container: HTMLElement): BlockyardScene {
 
   let game: GameState = newGame();
   let pendingHalfReset = false;
+  let humanAttributes: Attributes = BASELINE_ATTRIBUTES;
 
   const aiBatter = LEAGUE_AVERAGE_BATTER;
   let aiSwingScheduled = false;
@@ -248,6 +257,9 @@ export function createScene(container: HTMLElement): BlockyardScene {
       runners.reset();
       pendingHalfReset = false;
     }
+    // Runners move at the human's pace on the human's half; AI baserunning
+    // stays at the default until the AI gets its own attributes.
+    runners.setSpeedMultiplier(aiBatting() ? 1 : speedMultiplier(humanAttributes.speed));
     phase = 'winding';
     phaseClock = 0;
     pitchClock = 0;
@@ -289,6 +301,7 @@ export function createScene(container: HTMLElement): BlockyardScene {
 
   function startGame(): void {
     teams = menu.names();
+    humanAttributes = attributesForLevel(menu.level());
     menu.hide();
     overlay.hidden = true;
     pausePanel.hidden = true;
@@ -309,13 +322,18 @@ export function createScene(container: HTMLElement): BlockyardScene {
   function swing(): void {
     if (phase !== 'pitch' || judgement !== null) return;
     const error = pitchClock - pitch.duration;
+    // The AI keeps its own separate model (game/ai.ts); only the human batter
+    // feels their chosen level here — see game/attributes.ts.
+    const isHuman = !aiBatting();
+    const contactMult = isHuman ? contactMultiplier(humanAttributes.contact) : 1;
+    const powerMult = isHuman ? powerMultiplier(humanAttributes.power) : 1;
     swingClock = 0;
-    judgement = judgeSwing(error);
+    judgement = judgeSwing(error, contactMult);
     contactPos = pitchBallAt(pitchClock / pitch.duration);
 
     if (judgement.result === 'contact' && judgement.quality) {
       const quality = judgement.quality;
-      battedVel = launchVelocity(error, quality);
+      battedVel = launchVelocity(error, quality, powerMult);
       ballFlying = true;
       flightClock = 0;
       const feet = Math.round(carryDistance(contactPos, battedVel) * METRES_TO_FEET);
