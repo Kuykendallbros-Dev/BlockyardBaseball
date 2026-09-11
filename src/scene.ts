@@ -20,7 +20,7 @@ import { judgeSwing, launchVelocity } from './game/swing.ts';
 import type { SwingJudgement } from './game/swing.ts';
 import { METRES_TO_FEET, carryDistance, projectilePosition } from './game/flight.ts';
 import { type Pitch, plateTarget, rollPitch } from './game/pitching.ts';
-import { classifyBallInPlay, landingFrom, resolvePitch } from './game/atbat.ts';
+import { landingFrom, resolvePitch } from './game/atbat.ts';
 import type { PitchOutcome } from './game/atbat.ts';
 import { battingSide, formatScoreboard } from './game/scoreboard.ts';
 import type { BattingSide, TeamNames } from './game/scoreboard.ts';
@@ -330,7 +330,12 @@ export function createScene(container: HTMLElement): BlockyardScene {
       effects.burst(contactPos, quality === 'perfect' ? 1 : quality === 'solid' ? 0.6 : 0.3);
       shake(quality === 'perfect' ? 0.28 : quality === 'solid' ? 0.16 : 0.08, 0.35);
       concludePitch(
-        { kind: 'in-play', play: classifyBallInPlay(landingFrom(contactPos, battedVel)) },
+        resolvePitch(
+          judgement,
+          pitch.inZone,
+          landingFrom(contactPos, battedVel),
+          Math.random,
+        ),
         feel,
       );
     } else if (judgement.result === 'foul') {
