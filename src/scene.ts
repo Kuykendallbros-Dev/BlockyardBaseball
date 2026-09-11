@@ -26,6 +26,8 @@ import {
   speedMultiplier,
 } from './game/attributes.ts';
 import type { Attributes } from './game/attributes.ts';
+import { applyGear, findGear } from './game/gear.ts';
+import { createWallet, payoutFor } from './game/wallet.ts';
 import { METRES_TO_FEET, carryDistance, projectilePosition } from './game/flight.ts';
 import { type Pitch, plateTarget, rollPitch } from './game/pitching.ts';
 import { landingFrom, resolvePitch } from './game/atbat.ts';
@@ -181,6 +183,14 @@ export function createScene(container: HTMLElement): BlockyardScene {
   const runners = createRunners(scene);
   const menu = createMenu(container);
 
+  // Phase 3 essential path: an in-memory wallet and owned gear, no
+  // persistence yet (see the queue's accounts backlog item). A starting
+  // balance covers one item so the loadout is provable on the very first
+  // visit to the menu, not only after grinding a payout.
+  const wallet = createWallet(200);
+  const ownedGear = new Set<string>();
+  menu.setWallet(wallet.balance());
+
   let screen: Screen = 'menu';
   let teams: TeamNames = { away: 'Away', home: 'Home' };
 
@@ -249,6 +259,8 @@ export function createScene(container: HTMLElement): BlockyardScene {
       const who = game.winner === 'home' ? teams.home : teams.away;
       overlay.textContent = `${who.toUpperCase()} WINS  ${game.score.away}–${game.score.home}  ·  SPACE play again  ·  M menu`;
       overlay.hidden = false;
+      wallet.credit(payoutFor(game, HUMAN_SIDE));
+      menu.setWallet(wallet.balance());
     }
   }
 
@@ -301,7 +313,16 @@ export function createScene(container: HTMLElement): BlockyardScene {
 
   function startGame(): void {
     teams = menu.names();
-    humanAttributes = attributesForLevel(menu.level());
+
+    const chosenId = menu.gearChoice();
+    let equipped = chosenId ? findGear(chosenId) : undefined;
+    if (equipped && !ownedGear.has(equipped.id)) {
+      if (wallet.spend(equipped.price)) ownedGear.add(equipped.id);
+      else equipped = undefined; // couldn't afford it — play with nothing equipped
+    }
+    menu.setWallet(wallet.balance());
+    humanAttributes = applyGear(attributesForLevel(menu.level()), equipped);
+
     menu.hide();
     overlay.hidden = true;
     pausePanel.hidden = true;
