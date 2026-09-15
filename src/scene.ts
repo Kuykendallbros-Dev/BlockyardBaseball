@@ -308,7 +308,7 @@ export function createScene(container: HTMLElement): BlockyardScene {
         pitch.duration + TAKE_GRACE - 0.02,
       );
     } else {
-      readout = pitch.type;
+      readout = `${pitch.type} — ${teams.home} hitting`;
       aiSwingScheduled = false;
     }
   }
