@@ -50,6 +50,22 @@ const TAKE_GRACE = 0.22;
 const RESULT_TIME = 1.9;
 /** The human always plays the home team (bats in the bottom half). */
 const HUMAN_SIDE: BattingSide = 'home';
+/**
+ * Nine batter-block colors, weakest to strongest (red = most powerful).
+ * Purely cosmetic for now — cycles once per new plate appearance, not tied
+ * to any real attribute yet. See the roadmap's 2026-09-14 brainstorm.
+ */
+const BLOCK_COLORS: readonly number[] = [
+  0x3a6bd8, // blue
+  0x3a9bd8, // sky
+  0x3ad8c8, // teal
+  0x3ad86b, // green
+  0xa8d83a, // yellow-green
+  0xd8c83a, // yellow
+  0xd89a3a, // orange
+  0xd8642f, // dark orange
+  0xd8221f, // red
+];
 /** AI half-innings run on a tighter clock since the human only watches. */
 const AI_WIND_TIME = 0.7;
 const AI_RESULT_TIME = 1.15;
@@ -132,12 +148,11 @@ export function createScene(container: HTMLElement): BlockyardScene {
     scene.add(marker);
   }
 
-  const batter = new Mesh(
-    new BoxGeometry(1, 2, 1),
-    new MeshStandardMaterial({ color: 0xd8442f }),
-  );
+  const batterMaterial = new MeshStandardMaterial({ color: BLOCK_COLORS[0] });
+  const batter = new Mesh(new BoxGeometry(1, 2, 1), batterMaterial);
   batter.position.set(0.95, 1, 0.15);
   scene.add(batter);
+  let blockColorIndex = 0;
 
   const pitcher = new Mesh(
     new BoxGeometry(1.3, 2.6, 1.3),
@@ -298,6 +313,12 @@ export function createScene(container: HTMLElement): BlockyardScene {
     phaseClock = 0;
     pitchClock = 0;
     pitch = rollPitch(Math.random, zoneBiasForCount(game.half));
+
+    // A fresh count (0-0) means a new batter just stepped in — cycle the block color.
+    if (game.half.balls === 0 && game.half.strikes === 0) {
+      blockColorIndex = (blockColorIndex + 1) % BLOCK_COLORS.length;
+      batterMaterial.color.setHex(BLOCK_COLORS[blockColorIndex]);
+    }
 
     if (aiBatting()) {
       readout = `${pitch.type} — ${teams.away} hitting`;
