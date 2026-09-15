@@ -97,6 +97,12 @@ export function fieldBallInPlay(
     bestCatch = Math.max(bestCatch, clamp01((reach - gap) / 16 + 0.5));
   }
 
+  // Tracy's direct call, 2026-09-14: halve the hit rate on any ball that
+  // reaches the probabilistic catch check (not the deterministic HR/popout
+  // cases above). Still a placeholder pending attribute-driven fielding.
+  const HIT_PROBABILITY_MULTIPLIER = 0.5;
+  bestCatch = 1 - (1 - bestCatch) * HIT_PROBABILITY_MULTIPLIER;
+
   if (rand() < bestCatch) {
     if (grounder) return { hit: false, bases: 0, label: 'groundout' };
     if (liner) return { hit: false, bases: 0, label: 'lineout' };
