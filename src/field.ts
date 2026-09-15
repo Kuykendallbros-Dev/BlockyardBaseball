@@ -8,9 +8,14 @@
 export type Vec3 = readonly [number, number, number];
 
 export const HOME: Vec3 = [0, 0.06, 0.4];
-export const FIRST: Vec3 = [3.4, 0.06, 3.8];
+// The fixed camera behind home plate is mirrored left/right on screen from a
+// naive +x-is-right assumption (its lookAt flips handedness) — first and
+// third are swapped here, not in the camera, so runners visibly go home ->
+// first (screen right) -> second -> third (screen left) -> home, matching
+// real baseball as seen from behind the plate.
+export const FIRST: Vec3 = [-3.4, 0.06, 3.8];
 export const SECOND: Vec3 = [0, 0.06, 7.2];
-export const THIRD: Vec3 = [-3.4, 0.06, 3.8];
+export const THIRD: Vec3 = [3.4, 0.06, 3.8];
 
 /** Indexed 0 = home, 1 = first, 2 = second, 3 = third. */
 export const BASES: readonly Vec3[] = [HOME, FIRST, SECOND, THIRD];
