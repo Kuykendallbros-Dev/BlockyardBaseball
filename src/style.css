@@ -190,6 +190,32 @@ body,
   background: #ffdd6b;
 }
 
+/* Secondary action next to "Play ball" — outlined rather than filled so the
+   single-player path stays the obvious default. */
+.menu-online {
+  margin-top: 0.5rem;
+  padding: 0.55rem 1.5rem;
+  font: 700 0.95rem system-ui, sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #ffd23f;
+  background: transparent;
+  border: 2px solid #ffd23f;
+  border-radius: 0.4rem;
+  cursor: pointer;
+}
+
+.menu-online:hover {
+  background: rgba(255, 210, 63, 0.15);
+}
+
+.menu-online-status {
+  margin-top: 0.4rem;
+  font-size: 0.85rem;
+  letter-spacing: 0.04em;
+  opacity: 0.8;
+}
+
 .menu-hint {
   font-size: 0.85rem;
   opacity: 0.6;
