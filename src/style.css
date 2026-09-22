@@ -221,3 +221,151 @@ body,
   opacity: 0.6;
   letter-spacing: 0.1em;
 }
+
+/* --- P6-1 landing page + first-run how-to-play -------------------------- */
+
+/* Sits above the game menu (which the scene shows immediately) so an arriving
+   visitor reads the pitch for the game before they see its options. */
+.landing {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: rgba(6, 15, 31, 0.94);
+  color: #fff;
+  font-family: system-ui, -apple-system, sans-serif;
+}
+
+.landing[hidden] {
+  display: none;
+}
+
+.landing-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.9rem;
+  max-width: 34rem;
+  text-align: center;
+}
+
+.landing-card[hidden] {
+  display: none;
+}
+
+.landing-title {
+  margin: 0;
+  font-size: clamp(2rem, 7vw, 3.2rem);
+  letter-spacing: 0.02em;
+}
+
+.landing-tagline {
+  margin: 0;
+  font-size: 1.05rem;
+  line-height: 1.5;
+  opacity: 0.85;
+}
+
+.landing-points {
+  margin: 0.2rem 0 0.4rem;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.35rem;
+  font-size: 0.95rem;
+  opacity: 0.75;
+}
+
+.landing-play {
+  padding: 0.8rem 2.6rem;
+  font: 700 1.2rem system-ui, sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #08142a;
+  background: #ffd23f;
+  border: 0;
+  border-radius: 0.4rem;
+  cursor: pointer;
+}
+
+.landing-play:hover {
+  background: #ffdd6b;
+}
+
+.landing-how,
+.landing-skip {
+  padding: 0.35rem 0.8rem;
+  font: 600 0.85rem system-ui, sans-serif;
+  letter-spacing: 0.06em;
+  color: #ffd23f;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-decoration: underline;
+  opacity: 0.85;
+}
+
+.landing-how:hover,
+.landing-skip:hover {
+  opacity: 1;
+}
+
+.landing-progress {
+  margin: 0;
+  font-size: 0.8rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  opacity: 0.55;
+}
+
+.landing-step-title {
+  margin: 0;
+  font-size: clamp(1.4rem, 5vw, 2rem);
+}
+
+.landing-step-body {
+  margin: 0;
+  font-size: 1.02rem;
+  line-height: 1.55;
+  opacity: 0.88;
+}
+
+.landing-step-actions {
+  display: flex;
+  gap: 0.7rem;
+  margin-top: 0.3rem;
+}
+
+.landing-back,
+.landing-next {
+  padding: 0.55rem 1.5rem;
+  font: 700 0.95rem system-ui, sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-radius: 0.4rem;
+  cursor: pointer;
+}
+
+.landing-next {
+  color: #08142a;
+  background: #ffd23f;
+  border: 0;
+}
+
+.landing-next:hover {
+  background: #ffdd6b;
+}
+
+.landing-back {
+  color: #ffd23f;
+  background: transparent;
+  border: 2px solid #ffd23f;
+}
+
+.landing-back:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
