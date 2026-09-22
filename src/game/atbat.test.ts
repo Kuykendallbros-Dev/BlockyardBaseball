@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { landingFrom, resolvePitch, type Landing } from './atbat.ts';
-import { launchVelocity } from './swing.ts';
+import { judgeSwingWithZoneGuess, landingFrom, resolvePitch, type Landing } from './atbat.ts';
+import { WINDOWS, launchVelocity } from './swing.ts';
 
 const alwaysHit = () => 0.99; // borderline plays fall for hits
 const alwaysCaught = () => 0; // borderline plays are caught
@@ -48,6 +48,39 @@ describe('resolvePitch', () => {
     const dropped = resolvePitch(contact, true, gapper, alwaysHit);
     expect(caught.kind === 'in-play' && caught.play.hit).toBe(false);
     expect(dropped.kind === 'in-play' && dropped.play.hit).toBe(true);
+  });
+});
+
+describe('judgeSwingWithZoneGuess', () => {
+  it('falls through to the normal timing model when the guess covers the crossing point', () => {
+    // dead-on timing, guess dead centre, pitch crosses dead centre
+    expect(judgeSwingWithZoneGuess(0, 1, { row: 2, col: 2 }, [0, 0])).toEqual({
+      result: 'contact',
+      quality: 'perfect',
+    });
+  });
+
+  it('is an automatic whiff when the guess misses badly, even with perfect timing', () => {
+    // dead-on timing would normally be a perfect hit, but the guess is the
+    // opposite corner from where the pitch actually crossed
+    expect(
+      judgeSwingWithZoneGuess(0, 1, { row: 0, col: 0 }, [0.4, 0.5]),
+    ).toEqual({ result: 'whiff', quality: null });
+  });
+
+  it('never produces a foul or contact from a bad guess, regardless of timing error', () => {
+    for (const error of [0, WINDOWS.perfect, WINDOWS.solid, WINDOWS.contact, WINDOWS.foul]) {
+      expect(judgeSwingWithZoneGuess(error, 1, { row: 0, col: 0 }, [0.4, 0.5])).toEqual({
+        result: 'whiff',
+        quality: null,
+      });
+    }
+  });
+
+  it('still whiffs on bad timing even when the guess is correct', () => {
+    expect(
+      judgeSwingWithZoneGuess(WINDOWS.foul + 0.05, 1, { row: 2, col: 2 }, [0, 0]),
+    ).toEqual({ result: 'whiff', quality: null });
   });
 });
 
