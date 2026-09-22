@@ -43,6 +43,8 @@ import { createSounds } from './game/audio.ts';
 import { createEffects } from './effects.ts';
 import { createRunners } from './runners.ts';
 import { createZoneGrid } from './zonegrid.ts';
+import { createOnlineClient, type OnlineClient, type OnlineStatus } from './online.ts';
+import { DEFAULT_RATING } from './game/rating.ts';
 import { createMenu } from './menu.ts';
 import { BASES } from './field.ts';
 
@@ -79,7 +81,7 @@ const SWING_ANGLE = -1.5;
 /**
  * Human-batter-only strike-zone targeting (see `game/strikezone.ts`): pick a
  * tile before the pitch, one adjustment allowed once it's released. The AI
- * doesn't guess zones and is unaffected — see `aiBatting()` gates below.
+ * doesn't guess zones and is unaffected — see `opponentBatting()` gates below.
  */
 const DEFAULT_TILE: TileCoord = { row: 1, col: 2 };
 
@@ -243,6 +245,17 @@ export function createScene(container: HTMLElement): BlockyardScene {
   let pendingHalfReset = false;
   let humanAttributes: Attributes = BASELINE_ATTRIBUTES;
 
+  // P5-2b online play. Offline the scene simulates every pitch itself; online
+  // the server is authoritative and this scene becomes a renderer plus an
+  // input source — it never rolls a pitch or applies an outcome of its own.
+  // `mySide` is whichever dugout the server assigned; offline it stays
+  // `HUMAN_SIDE` so all the existing single-player paths behave identically.
+  let mySide: BattingSide = HUMAN_SIDE;
+  let onlineMode = false;
+  let online: OnlineClient | null = null;
+  /** Set once we have answered a pitch, cleared when the server replies. */
+  let awaitingServerResult = false;
+
   // The human batter's zone guess: freely re-pickable before the pitch is
   // released, then exactly one adjustment once it's in flight (`pickTile`).
   let chosenTile: TileCoord = DEFAULT_TILE;
@@ -253,8 +266,15 @@ export function createScene(container: HTMLElement): BlockyardScene {
   let aiSwingScheduled = false;
   let aiSwingAt = 0;
 
-  function aiBatting(): boolean {
-    return battingSide(game.halfIndex) !== HUMAN_SIDE;
+  /**
+   * Is someone other than this client at bat? Offline that is always the AI
+   * (`mySide` stays `HUMAN_SIDE`); online it is the remote opponent, and the
+   * server tells us which dugout we are in via `matchStart`. Every "not our
+   * turn" gate below — input, the zone grid, wind/dwell timing — keys off
+   * this one predicate, so online play reuses them as-is.
+   */
+  function opponentBatting(): boolean {
+    return battingSide(game.halfIndex) !== mySide;
   }
 
   function setBall(p: readonly [number, number, number]): void {
@@ -275,9 +295,19 @@ export function createScene(container: HTMLElement): BlockyardScene {
     return state.score.away + state.score.home;
   }
 
-  function concludePitch(outcome: PitchOutcome, feel = ''): void {
+  /**
+   * Land one resolved pitch: advance the game, play the feedback, and — on
+   * the final out — settle the wallet and pass.
+   *
+   * `serverGame` is supplied only in online play, where the match server
+   * already applied the outcome and its state is authoritative. Passing it
+   * skips the local `applyPitchToGame` entirely rather than recomputing and
+   * hoping the two agree; everything downstream (runners, readout, game-over
+   * overlay) works off `game` either way.
+   */
+  function concludePitch(outcome: PitchOutcome, feel = '', serverGame?: GameState): void {
     const before = game;
-    game = applyPitchToGame(game, outcome);
+    game = serverGame ?? applyPitchToGame(game, outcome);
 
     if (totalRuns(game) > totalRuns(before)) {
       sounds.crowd('perfect');
@@ -292,14 +322,22 @@ export function createScene(container: HTMLElement): BlockyardScene {
 
     if (game.final) {
       const who = game.winner === 'home' ? teams.home : teams.away;
-      overlay.textContent = `${who.toUpperCase()} WINS  ${game.score.away}–${game.score.home}  ·  SPACE play again  ·  M menu`;
+      overlay.textContent = onlineMode
+        ? `${who.toUpperCase()} WINS  ${game.score.away}–${game.score.home}  ·  M menu`
+        : `${who.toUpperCase()} WINS  ${game.score.away}–${game.score.home}  ·  SPACE play again  ·  M menu`;
       overlay.hidden = false;
-      wallet.credit(payoutFor(game, HUMAN_SIDE));
-      const gain = applyPassGain(pass, pointsFor(game, HUMAN_SIDE));
-      pass = gain.state;
-      wallet.credit(gain.coinsAwarded);
-      menu.setWallet(wallet.balance());
-      menu.setPass(progressFor(pass.points));
+
+      // Coins and pass points are the single-player economy. Online payouts
+      // need a server-side wallet to not be trivially forgeable, so they are
+      // deliberately left off this slice (enhancement backlog).
+      if (!onlineMode) {
+        wallet.credit(payoutFor(game, HUMAN_SIDE));
+        const gain = applyPassGain(pass, pointsFor(game, HUMAN_SIDE));
+        pass = gain.state;
+        wallet.credit(gain.coinsAwarded);
+        menu.setWallet(wallet.balance());
+        menu.setPass(progressFor(pass.points));
+      }
     }
   }
 
@@ -310,7 +348,7 @@ export function createScene(container: HTMLElement): BlockyardScene {
     }
     // Runners move at the human's pace on the human's half; AI baserunning
     // stays at the default until the AI gets its own attributes.
-    runners.setSpeedMultiplier(aiBatting() ? 1 : speedMultiplier(humanAttributes.speed));
+    runners.setSpeedMultiplier(opponentBatting() ? 1 : speedMultiplier(humanAttributes.speed));
     phase = 'winding';
     phaseClock = 0;
     pitchClock = 0;
@@ -319,18 +357,24 @@ export function createScene(container: HTMLElement): BlockyardScene {
     ballFlying = false;
     flightClock = 0;
     swingClock = -1;
-    readout = 'SPACE to swing';
+    readout = onlineMode ? 'waiting for the next pitch…' : 'SPACE to swing';
     zoneTint = ZONE_IDLE;
     effects.clearTrail();
     setBall(RELEASE_POINT);
   }
 
-  function beginPitch(): void {
+  /**
+   * Release a pitch. Offline the scene rolls it; online `serverPitch` is the
+   * one the match server already rolled and broadcast, and the scene only
+   * animates it — rolling our own would desync the two clients instantly.
+   */
+  function beginPitch(serverPitch?: Pitch): void {
     phase = 'pitch';
     phaseClock = 0;
     pitchClock = 0;
     tileAdjusted = false; // a fresh pitch means a fresh one-tile adjustment
-    pitch = rollPitch(Math.random, zoneBiasForCount(game.half));
+    awaitingServerResult = false;
+    pitch = serverPitch ?? rollPitch(Math.random, zoneBiasForCount(game.half));
 
     // A fresh count (0-0) means a new batter just stepped in — cycle the block color.
     if (game.half.balls === 0 && game.half.strikes === 0) {
@@ -338,18 +382,22 @@ export function createScene(container: HTMLElement): BlockyardScene {
       batterMaterial.color.setHex(BLOCK_COLORS[blockColorIndex]);
     }
 
-    if (aiBatting()) {
-      readout = `${pitch.type} — ${teams.away} hitting`;
-      const decision = batterDecision(aiBatter, pitch.inZone, Math.random);
-      aiSwingScheduled = decision.swing;
-      aiSwingAt = Math.min(
-        Math.max(pitch.duration + decision.timingError, 0.06),
-        pitch.duration + TAKE_GRACE - 0.02,
-      );
-    } else {
-      readout = `${pitch.type} — ${teams.home} hitting`;
+    const hittingTeam = battingSide(game.halfIndex) === 'away' ? teams.away : teams.home;
+    readout = `${pitch.type} — ${hittingTeam} hitting`;
+
+    // Online there is no local AI batter at all: the opponent's swings are
+    // decided on their machine and reach us as `result` messages.
+    if (onlineMode || !opponentBatting()) {
       aiSwingScheduled = false;
+      return;
     }
+
+    const decision = batterDecision(aiBatter, pitch.inZone, Math.random);
+    aiSwingScheduled = decision.swing;
+    aiSwingAt = Math.min(
+      Math.max(pitch.duration + decision.timingError, 0.06),
+      pitch.duration + TAKE_GRACE - 0.02,
+    );
   }
 
   function endWithResult(): void {
@@ -358,6 +406,18 @@ export function createScene(container: HTMLElement): BlockyardScene {
   }
 
   function startGame(): void {
+    // Starting a local game cancels any queued/live online match — otherwise
+    // clicking "Play ball" while waiting for an opponent leaves the scene in
+    // online mode with no server driving it.
+    if (online) {
+      online.disconnect();
+      online = null;
+    }
+    onlineMode = false;
+    mySide = HUMAN_SIDE;
+    awaitingServerResult = false;
+    menu.setOnlineStatus('');
+
     teams = menu.names();
 
     const chosenId = menu.gearChoice();
@@ -385,15 +445,126 @@ export function createScene(container: HTMLElement): BlockyardScene {
     screen = 'menu';
     overlay.hidden = true;
     pausePanel.hidden = true;
+    // Backing out of a match drops the socket: without a reconnect protocol
+    // (deferred backlog) a half-attached client is worse than a clean exit.
+    if (online) {
+      online.disconnect();
+      online = null;
+    }
+    onlineMode = false;
+    mySide = HUMAN_SIDE;
+    menu.setOnlineStatus('');
     menu.show();
+  }
+
+  /** Human-readable matchmaking state for the menu's status line. */
+  function onlineStatusText(status: OnlineStatus, detail?: string): string {
+    if (detail && status === 'error') return `Offline: ${detail}`;
+    switch (status) {
+      case 'connecting':
+        return 'Connecting to the match server…';
+      case 'queued':
+        return 'Waiting for an opponent…';
+      case 'playing':
+        return detail ?? 'Match in progress';
+      case 'finished':
+        return 'Match complete';
+      case 'error':
+        return 'Offline: could not reach the match server';
+      default:
+        return '';
+    }
+  }
+
+  /**
+   * Queue for an online match. The scene switches into renderer mode: the
+   * server rolls every pitch and resolves every swing, and the handlers below
+   * are the only things that advance play.
+   */
+  function startOnlineMatch(): void {
+    if (online) return; // already queued or in a match
+
+    teams = menu.names();
+    humanAttributes = BASELINE_ATTRIBUTES; // online attributes are server-side work (deferred)
+    onlineMode = true;
+    awaitingServerResult = false;
+    menu.setOnlineStatus('Connecting to the match server…');
+
+    online = createOnlineClient({
+      handlers: {
+        onStatus: (status, detail) => {
+          menu.setOnlineStatus(onlineStatusText(status, detail));
+          if (status === 'error' && screen === 'playing') {
+            readout = detail ?? 'connection lost';
+          }
+        },
+
+        onMatchStart: ({ side, you, opponent, game: serverGame }) => {
+          mySide = side;
+          // The server names the dugouts, not the menu fields: whoever is
+          // 'away' on the server is the away team on both screens.
+          teams =
+            side === 'away'
+              ? { away: you.name, home: opponent.name }
+              : { away: opponent.name, home: you.name };
+          game = serverGame;
+          pendingHalfReset = false;
+          runners.reset();
+          chosenTile = DEFAULT_TILE;
+          zoneGrid.setSelected(chosenTile);
+          menu.hide();
+          overlay.hidden = true;
+          pausePanel.hidden = true;
+          screen = 'playing';
+          beginWinding();
+        },
+
+        onPitch: (serverPitch) => {
+          if (screen !== 'playing') return;
+          beginPitch(serverPitch);
+        },
+
+        onResult: (outcome, serverGame) => {
+          if (screen !== 'playing') return;
+          awaitingServerResult = false;
+          // Feedback is played off the outcome the server sent; the scene
+          // never re-judges the swing it already reported.
+          if (outcome.kind === 'swinging-strike') sounds.whiff();
+          else if (outcome.kind === 'foul') sounds.foul();
+          else if (outcome.kind === 'in-play') sounds.crack('solid');
+          concludePitch(outcome, '', serverGame);
+          endWithResult();
+        },
+
+        onMatchEnd: ({ ratings }) => {
+          const mine = mySide === 'away' ? ratings.away : ratings.home;
+          menu.setOnlineStatus(`Match complete · your rating: ${mine}`);
+        },
+      },
+    });
+
+    online.connect(menu.names()[HUMAN_SIDE], DEFAULT_RATING);
   }
 
   function swing(): void {
     if (phase !== 'pitch' || judgement !== null) return;
     const error = pitchClock - pitch.duration;
+
+    // Online the server is the judge. Report the timing error and play the
+    // swing animation locally for responsiveness, but resolve nothing — the
+    // outcome arrives as a `result` message and is applied in `onResult`.
+    // Judging here too would let two clients disagree about the same pitch.
+    if (onlineMode) {
+      if (opponentBatting() || awaitingServerResult) return;
+      swingClock = 0;
+      awaitingServerResult = true;
+      online?.swing(error);
+      return;
+    }
+
     // The AI keeps its own separate model (game/ai.ts); only the human batter
     // feels their chosen level here — see game/attributes.ts.
-    const isHuman = !aiBatting();
+    const isHuman = !opponentBatting();
     const contactMult = isHuman ? contactMultiplier(humanAttributes.contact) : 1;
     const powerMult = isHuman ? powerMultiplier(humanAttributes.power) : 1;
     swingClock = 0;
@@ -468,7 +639,7 @@ export function createScene(container: HTMLElement): BlockyardScene {
 
     // screen === 'playing'
     if (game.final) {
-      if (k === 'Space') {
+      if (k === 'Space' && !onlineMode) {
         e.preventDefault();
         startGame();
       } else if (k === 'KeyM') {
@@ -486,8 +657,10 @@ export function createScene(container: HTMLElement): BlockyardScene {
     }
     if (k === 'Space') {
       e.preventDefault();
-      if (aiBatting()) return; // the AI is hitting — nothing for the human to do
-      if (phase === 'winding') beginPitch();
+      if (opponentBatting()) return; // not our at-bat — nothing to do
+      // Online the server releases the pitch; space is only ever a swing.
+      if (onlineMode) swing();
+      else if (phase === 'winding') beginPitch();
       else swing();
     }
   }
@@ -500,7 +673,7 @@ export function createScene(container: HTMLElement): BlockyardScene {
    * handling above: ignored on any screen but the live human at-bat.
    */
   function onPointerDown(e: PointerEvent): void {
-    if (screen !== 'playing' || game.final || aiBatting()) return;
+    if (screen !== 'playing' || game.final || opponentBatting()) return;
     if (phase !== 'winding' && phase !== 'pitch') return;
 
     const rect = renderer.domElement.getBoundingClientRect();
@@ -522,17 +695,39 @@ export function createScene(container: HTMLElement): BlockyardScene {
   function stepRound(dt: number): void {
     if (phase === 'winding') {
       setBall(RELEASE_POINT);
-      if (phaseClock >= (aiBatting() ? AI_WIND_TIME : WIND_TIME)) beginPitch();
+      // Online the server decides when the next pitch is thrown, so there is
+      // nothing to wind up to — `onPitch` calls `beginPitch` when it arrives.
+      if (onlineMode) return;
+      if (phaseClock >= (opponentBatting() ? AI_WIND_TIME : WIND_TIME)) beginPitch();
       return;
     }
 
     if (phase === 'result') {
-      const dwell = aiBatting() ? AI_RESULT_TIME : RESULT_TIME;
+      const dwell = opponentBatting() ? AI_RESULT_TIME : RESULT_TIME;
       if (phaseClock >= dwell && !ballFlying) beginWinding();
       return;
     }
 
     pitchClock += dt;
+
+    // Online the pitch does not end on a local clock — it ends when the
+    // server's `result` message lands. All this does is fly the ball to the
+    // plate and, if we are the batter and let it go by, send the take. (The
+    // server also auto-takes after its own timeout, so a dropped frame here
+    // stalls nothing.)
+    if (onlineMode) {
+      setBall(pitchBallAt(Math.min(pitchClock / pitch.duration, 1)));
+      if (
+        !awaitingServerResult &&
+        !opponentBatting() &&
+        pitchClock >= pitch.duration + TAKE_GRACE
+      ) {
+        awaitingServerResult = true;
+        sounds.mitt();
+        online?.take();
+      }
+      return;
+    }
 
     if (aiSwingScheduled && judgement === null && pitchClock >= aiSwingAt) {
       swing();
@@ -595,7 +790,7 @@ export function createScene(container: HTMLElement): BlockyardScene {
 
     stepCamera(dt);
     zoneMaterial.color.setHex(zoneTint);
-    zoneGrid.setVisible(screen === 'playing' && !game.final && !aiBatting());
+    zoneGrid.setVisible(screen === 'playing' && !game.final && !opponentBatting());
 
     hud.textContent = screen === 'playing' && !game.final ? readout : '';
     board.textContent =
@@ -624,6 +819,7 @@ export function createScene(container: HTMLElement): BlockyardScene {
 
   menu.onPlay(startGame);
   menu.show();
+  menu.onPlayOnline(startOnlineMatch);
   window.addEventListener('keydown', onKeyDown);
   window.addEventListener('resize', resize);
   renderer.domElement.addEventListener('pointerdown', onPointerDown);
@@ -637,6 +833,8 @@ export function createScene(container: HTMLElement): BlockyardScene {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('resize', resize);
       renderer.domElement.removeEventListener('pointerdown', onPointerDown);
+      online?.disconnect();
+      online = null;
       effects.dispose();
       runners.dispose();
       zoneGrid.dispose();

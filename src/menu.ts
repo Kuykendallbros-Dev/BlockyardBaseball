@@ -29,6 +29,13 @@ export interface Menu {
   setPass: (progress: PassProgress) => void;
   /** Register the handler fired by the play button. */
   onPlay: (handler: () => void) => void;
+  /** Register the handler fired by the online button. */
+  onPlayOnline: (handler: () => void) => void;
+  /**
+   * Show a line of matchmaking/connection status under the buttons, or clear
+   * it with `''`. The scene feeds this from the online client's status.
+   */
+  setOnlineStatus: (text: string) => void;
 }
 
 export function createMenu(container: HTMLElement): Menu {
@@ -58,6 +65,8 @@ export function createMenu(container: HTMLElement): Menu {
       </label>
     </div>
     <button class="menu-play" type="button">Play ball</button>
+    <button class="menu-online" type="button">Play online</button>
+    <p class="menu-online-status" hidden></p>
     <p class="menu-hint">space to swing &nbsp;·&nbsp; esc to pause</p>
   `;
   container.appendChild(root);
@@ -69,13 +78,23 @@ export function createMenu(container: HTMLElement): Menu {
   const wallet = root.querySelector<HTMLElement>('.menu-wallet');
   const pass = root.querySelector<HTMLElement>('.menu-pass');
   const play = root.querySelector<HTMLButtonElement>('.menu-play');
+  const onlineButton = root.querySelector<HTMLButtonElement>('.menu-online');
+  const onlineStatus = root.querySelector<HTMLElement>('.menu-online-status');
   if (!away || !home || !level || !gear || !wallet || !pass || !play) {
+    throw new Error('menu: markup missing');
+  }
+  if (!onlineButton || !onlineStatus) {
     throw new Error('menu: markup missing');
   }
 
   let handler: () => void = () => {};
   play.addEventListener('click', () => {
     handler();
+  });
+
+  let onlineHandler: () => void = () => {};
+  onlineButton.addEventListener('click', () => {
+    onlineHandler();
   });
 
   return {
@@ -107,6 +126,13 @@ export function createMenu(container: HTMLElement): Menu {
     },
     onPlay: (h) => {
       handler = h;
+    },
+    onPlayOnline: (h) => {
+      onlineHandler = h;
+    },
+    setOnlineStatus: (text) => {
+      onlineStatus.textContent = text;
+      onlineStatus.hidden = text === '';
     },
   };
 }
