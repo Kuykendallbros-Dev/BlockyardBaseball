@@ -31,8 +31,10 @@ import { createWallet, payoutFor } from './game/wallet.ts';
 import { applyPassGain, newPass, pointsFor, progressFor } from './game/pass.ts';
 import { METRES_TO_FEET, carryDistance, projectilePosition } from './game/flight.ts';
 import { type Pitch, plateTarget, rollPitch } from './game/pitching.ts';
-import { landingFrom, resolvePitch } from './game/atbat.ts';
+import { judgeSwingWithZoneGuess, landingFrom, resolvePitch } from './game/atbat.ts';
 import type { PitchOutcome } from './game/atbat.ts';
+import { pickTile } from './game/strikezone.ts';
+import type { TileCoord } from './game/strikezone.ts';
 import { battingSide, formatScoreboard } from './game/scoreboard.ts';
 import type { BattingSide, TeamNames } from './game/scoreboard.ts';
 import { type GameState, applyPitchToGame, newGame } from './game/game.ts';
@@ -40,6 +42,7 @@ import { LEAGUE_AVERAGE_BATTER, batterDecision, zoneBiasForCount } from './game/
 import { createSounds } from './game/audio.ts';
 import { createEffects } from './effects.ts';
 import { createRunners } from './runners.ts';
+import { createZoneGrid } from './zonegrid.ts';
 import { createMenu } from './menu.ts';
 import { BASES } from './field.ts';
 
@@ -72,6 +75,13 @@ const AI_RESULT_TIME = 1.15;
 const MAX_FLIGHT = 3.5;
 const SWING_DURATION = 0.11;
 const SWING_ANGLE = -1.5;
+
+/**
+ * Human-batter-only strike-zone targeting (see `game/strikezone.ts`): pick a
+ * tile before the pitch, one adjustment allowed once it's released. The AI
+ * doesn't guess zones and is unaffected — see `aiBatting()` gates below.
+ */
+const DEFAULT_TILE: TileCoord = { row: 1, col: 2 };
 
 const ZONE_IDLE = 0xffd23f;
 const ZONE_HIT = 0x35c759;
@@ -197,6 +207,7 @@ export function createScene(container: HTMLElement): BlockyardScene {
   const sounds = createSounds();
   const effects = createEffects(scene);
   const runners = createRunners(scene);
+  const zoneGrid = createZoneGrid(scene);
   const menu = createMenu(container);
 
   // Phase 3 essential path: an in-memory wallet and owned gear, no
@@ -231,6 +242,12 @@ export function createScene(container: HTMLElement): BlockyardScene {
   let game: GameState = newGame();
   let pendingHalfReset = false;
   let humanAttributes: Attributes = BASELINE_ATTRIBUTES;
+
+  // The human batter's zone guess: freely re-pickable before the pitch is
+  // released, then exactly one adjustment once it's in flight (`pickTile`).
+  let chosenTile: TileCoord = DEFAULT_TILE;
+  let tileAdjusted = false;
+  zoneGrid.setSelected(chosenTile);
 
   const aiBatter = LEAGUE_AVERAGE_BATTER;
   let aiSwingScheduled = false;
@@ -312,6 +329,7 @@ export function createScene(container: HTMLElement): BlockyardScene {
     phase = 'pitch';
     phaseClock = 0;
     pitchClock = 0;
+    tileAdjusted = false; // a fresh pitch means a fresh one-tile adjustment
     pitch = rollPitch(Math.random, zoneBiasForCount(game.half));
 
     // A fresh count (0-0) means a new batter just stepped in — cycle the block color.
@@ -357,6 +375,8 @@ export function createScene(container: HTMLElement): BlockyardScene {
     game = newGame();
     pendingHalfReset = false;
     runners.reset();
+    chosenTile = DEFAULT_TILE;
+    zoneGrid.setSelected(chosenTile);
     screen = 'playing';
     beginWinding();
   }
@@ -377,7 +397,11 @@ export function createScene(container: HTMLElement): BlockyardScene {
     const contactMult = isHuman ? contactMultiplier(humanAttributes.contact) : 1;
     const powerMult = isHuman ? powerMultiplier(humanAttributes.power) : 1;
     swingClock = 0;
-    judgement = judgeSwing(error, contactMult);
+    // The AI keeps swinging on timing alone (game/ai.ts); only the human
+    // batter's swing is gated by their strike-zone guess.
+    judgement = isHuman
+      ? judgeSwingWithZoneGuess(error, contactMult, chosenTile, pitch.crossing)
+      : judgeSwing(error, contactMult);
     contactPos = pitchBallAt(pitchClock / pitch.duration);
 
     if (judgement.result === 'contact' && judgement.quality) {
@@ -468,6 +492,33 @@ export function createScene(container: HTMLElement): BlockyardScene {
     }
   }
 
+  /**
+   * Tile taps/clicks for the zone guess. Before the pitch is released
+   * (`winding`) the pick is free and unlimited; once it's released
+   * (`pitch`) only the first tap moves the guess (`pickTile`'s one
+   * adjustment) — later taps this pitch are no-ops. Mirrors the spacebar
+   * handling above: ignored on any screen but the live human at-bat.
+   */
+  function onPointerDown(e: PointerEvent): void {
+    if (screen !== 'playing' || game.final || aiBatting()) return;
+    if (phase !== 'winding' && phase !== 'pitch') return;
+
+    const rect = renderer.domElement.getBoundingClientRect();
+    const ndcX = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    const ndcY = -(((e.clientY - rect.top) / rect.height) * 2 - 1);
+    const tile = zoneGrid.pickAt(ndcX, ndcY, camera);
+    if (!tile) return;
+
+    if (phase === 'winding') {
+      chosenTile = tile;
+    } else if (judgement === null) {
+      const picked = pickTile(chosenTile, tile, tileAdjusted);
+      chosenTile = picked.tile;
+      tileAdjusted = picked.adjusted;
+    }
+    zoneGrid.setSelected(chosenTile);
+  }
+
   function stepRound(dt: number): void {
     if (phase === 'winding') {
       setBall(RELEASE_POINT);
@@ -544,6 +595,7 @@ export function createScene(container: HTMLElement): BlockyardScene {
 
     stepCamera(dt);
     zoneMaterial.color.setHex(zoneTint);
+    zoneGrid.setVisible(screen === 'playing' && !game.final && !aiBatting());
 
     hud.textContent = screen === 'playing' && !game.final ? readout : '';
     board.textContent =
@@ -574,6 +626,7 @@ export function createScene(container: HTMLElement): BlockyardScene {
   menu.show();
   window.addEventListener('keydown', onKeyDown);
   window.addEventListener('resize', resize);
+  renderer.domElement.addEventListener('pointerdown', onPointerDown);
   beginWinding();
   resize();
 
@@ -583,8 +636,10 @@ export function createScene(container: HTMLElement): BlockyardScene {
     dispose: () => {
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('resize', resize);
+      renderer.domElement.removeEventListener('pointerdown', onPointerDown);
       effects.dispose();
       runners.dispose();
+      zoneGrid.dispose();
       renderer.dispose();
       renderer.domElement.remove();
       hud.remove();

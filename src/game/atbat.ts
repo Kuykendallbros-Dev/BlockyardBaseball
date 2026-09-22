@@ -8,7 +8,8 @@
 
 import { METRES_TO_FEET, carryDistance } from './flight.ts';
 import { type BallInPlay, type FieldingDifficulty, fieldBallInPlay } from './fielding.ts';
-import type { SwingJudgement } from './swing.ts';
+import { judgeSwing, type SwingJudgement } from './swing.ts';
+import { isZoneGuessCorrect, type TileCoord } from './strikezone.ts';
 
 export type { BallInPlay, FieldingDifficulty, HitLabel, OutLabel } from './fielding.ts';
 export { FENCE_FT } from './fielding.ts';
@@ -41,6 +42,27 @@ export function landingFrom(
   const bearingDeg = (Math.atan2(velocity[0], velocity[2]) * 180) / Math.PI;
   const distanceFt = carryDistance(contactPoint, velocity) * METRES_TO_FEET;
   return { distanceFt, launchAngleDeg, bearingDeg };
+}
+
+/**
+ * Gate the existing timing-based swing judgement behind the batter's strike-
+ * zone guess (see `./strikezone.ts`). If `chosenTile` isn't within tolerance of
+ * where the pitch actually crossed, the swing is an automatic whiff and
+ * `judgeSwing` never runs — no second probability roll on top of the timing
+ * model, the zone guess is purely a gate on whether contact resolution
+ * happens at all. This is a human-batter-only concern: the AI (`./ai.ts`,
+ * `./sim.ts`) doesn't guess zones and keeps calling `judgeSwing` directly.
+ */
+export function judgeSwingWithZoneGuess(
+  errorSeconds: number,
+  contactMultiplier: number,
+  chosenTile: TileCoord,
+  crossing: readonly [number, number],
+): SwingJudgement {
+  if (!isZoneGuessCorrect(chosenTile, crossing)) {
+    return { result: 'whiff', quality: null };
+  }
+  return judgeSwing(errorSeconds, contactMultiplier);
 }
 
 /**
