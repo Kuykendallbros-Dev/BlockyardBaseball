@@ -13,6 +13,7 @@ import type { PitchOutcome } from './game/atbat.ts';
 import type { GameState } from './game/game.ts';
 import type { Pitch } from './game/pitching.ts';
 import type { BattingSide } from './game/scoreboard.ts';
+import { matchServerUrl } from './endpoint.ts';
 
 /** Which dugout this client is batting from. */
 export type Side = BattingSide;
@@ -47,17 +48,14 @@ export type ServerMessage =
   | { type: 'error'; message: string };
 
 /**
- * Where the match server lives. Overridable at build time so a local server
- * can be pointed at without editing source.
- *
- * NOTE (surfaced, not worked around): this is a plain `ws://` endpoint. A page
- * served over HTTPS — which GitHub Pages is — will have the browser block the
- * connection as mixed content. Online play therefore works from the HTTP web
- * droplet and from local dev, and is expected to fail on the Pages build until
- * the API gets a domain and a TLS certificate. Tracked in the queue.
+ * Where the match server lives. See `./endpoint.ts` — on an HTTPS page this
+ * resolves to a same-origin `wss://` path that the site's nginx proxies to the
+ * match server, which is what makes online play work without a second domain
+ * or certificate. On plain HTTP it connects to the droplet directly.
  */
-export const DEFAULT_SERVER_URL: string =
-  (import.meta.env?.VITE_MATCH_SERVER_URL as string | undefined) ?? 'ws://104.236.66.46:8080';
+export function defaultServerUrl(): string {
+  return matchServerUrl();
+}
 
 /**
  * The minimum of the `WebSocket` surface this client uses. Narrowing it to an
@@ -128,7 +126,7 @@ function defaultSocket(url: string): SocketLike {
 }
 
 export function createOnlineClient(options: OnlineClientOptions = {}): OnlineClient {
-  const url = options.url ?? DEFAULT_SERVER_URL;
+  const url = options.url ?? defaultServerUrl();
   const createSocket = options.createSocket ?? defaultSocket;
   const handlers = options.handlers ?? {};
 
