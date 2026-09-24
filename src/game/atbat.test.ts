@@ -30,7 +30,16 @@ describe('resolvePitch', () => {
     const landing: Landing = { distanceFt: 400, launchAngleDeg: 28, bearingDeg: 5 };
     expect(
       resolvePitch({ result: 'contact', quality: 'perfect' }, true, landing),
-    ).toEqual({ kind: 'in-play', play: { hit: true, bases: 4, label: 'home run' } });
+    ).toEqual({
+      kind: 'in-play',
+      play: {
+        hit: true,
+        bases: 4,
+        label: 'home run',
+        battedBallType: 'fly',
+        error: false,
+      },
+    });
   });
 
   it('throws when a contact swing has no landing', () => {
@@ -97,9 +106,18 @@ describe('landingFrom', () => {
     expect(landingFrom([0, 1, 0.6], [-10, 8, 20]).bearingDeg).toBeLessThan(-15);
   });
 
-  it('turns a dead-on perfect swing into a deep drive', () => {
+  it('turns a dead-on swing into a hard line drive', () => {
+    // Timing alone no longer guarantees a home run — squaring one up at the
+    // default launch angle is a screaming liner, and it takes extra loft (the
+    // `rand`-driven bat-plane variation) to get one out of the park.
     const landing = landingFrom([0, 1, 0.6], launchVelocity(0, 'perfect'));
-    expect(landing.distanceFt).toBeGreaterThan(330);
-    expect(landing.launchAngleDeg).toBeGreaterThan(18);
+    expect(landing.distanceFt).toBeGreaterThan(200);
+    expect(landing.distanceFt).toBeLessThan(330);
+    expect(landing.launchAngleDeg).toBeGreaterThan(8);
+  });
+
+  it('gets a squared-up ball out of the park when it is lifted', () => {
+    const lifted = landingFrom([0, 1, 0.6], launchVelocity(0, 'perfect', 1.2, () => 0.99));
+    expect(lifted.distanceFt).toBeGreaterThan(330);
   });
 });

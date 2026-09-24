@@ -1,19 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import type { GameState } from './game.ts';
+import { type GameState, newGame } from './game.ts';
 import { createWallet, payoutFor } from './wallet.ts';
 
 function finishedGame(overrides: Partial<GameState>): GameState {
+  const base = newGame();
   return {
+    ...base,
     halfIndex: 17,
-    half: {
-      balls: 0,
-      strikes: 0,
-      outs: 3,
-      bases: [false, false, false],
-      runs: 0,
-      over: true,
-      lastEvent: 'side retired',
-    },
+    half: { ...base.half, outs: 3, over: true, lastEvent: 'side retired' },
     score: { away: 2, home: 5 },
     lineScore: [],
     final: true,

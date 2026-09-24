@@ -8,16 +8,32 @@ const whiff: PitchOutcome = { kind: 'swinging-strike' };
 const foul: PitchOutcome = { kind: 'foul' };
 const hit = (label: 'single' | 'double' | 'triple' | 'home run'): PitchOutcome => ({
   kind: 'in-play',
-  play: { hit: true, bases: label === 'home run' ? 4 : label === 'triple' ? 3 : label === 'double' ? 2 : 1, label },
+  play: {
+    hit: true,
+    bases: label === 'home run' ? 4 : label === 'triple' ? 3 : label === 'double' ? 2 : 1,
+    label,
+    battedBallType: 'line',
+    error: false,
+  },
 });
 const flyout: PitchOutcome = {
   kind: 'in-play',
-  play: { hit: false, bases: 0, label: 'flyout' },
+  play: { hit: false, bases: 0, label: 'flyout', battedBallType: 'fly', error: false },
 };
+
+/**
+ * Baserunning judgement calls are probabilistic now, so the fixtures pin `rand`
+ * high: no runner ever takes the extra base, which keeps these tests about the
+ * rules rather than the dice.
+ */
+const noExtraBases = () => 0.99;
 
 /** Replay a sequence of outcomes from a fresh half-inning. */
 function replay(...outcomes: PitchOutcome[]): HalfInningState {
-  return outcomes.reduce(applyPitch, newHalfInning());
+  return outcomes.reduce(
+    (state, outcome) => applyPitch(state, outcome, noExtraBases),
+    newHalfInning(),
+  );
 }
 
 describe('newHalfInning', () => {
@@ -52,8 +68,11 @@ describe('baserunning', () => {
   it('pushes a run in on a bases-loaded walk', () => {
     const loaded = replay(hit('single'), hit('single'), hit('single'));
     expect(loaded.bases).toEqual([true, true, true]);
-    const forced = applyPitch(loaded, ball);
-    const walked = [ball, ball, ball].reduce(applyPitch, forced);
+    const forced = applyPitch(loaded, ball, noExtraBases);
+    const walked = [ball, ball, ball].reduce(
+      (state, outcome) => applyPitch(state, outcome, noExtraBases),
+      forced,
+    );
     expect(walked.runs).toBe(1);
     expect(walked.bases).toEqual([true, true, true]);
   });
@@ -85,5 +104,98 @@ describe('end of half-inning', () => {
     expect(s.outs).toBe(3);
     const after = applyPitch(s, hit('home run'));
     expect(after).toBe(s);
+  });
+});
+
+describe('real baseball baserunning', () => {
+  const grounder: PitchOutcome = {
+    kind: 'in-play',
+    play: { hit: false, bases: 0, label: 'groundout', battedBallType: 'ground', error: false },
+  };
+  const flyBall: PitchOutcome = {
+    kind: 'in-play',
+    play: { hit: false, bases: 0, label: 'flyout', battedBallType: 'fly', error: false },
+  };
+  const bootedIt: PitchOutcome = {
+    kind: 'in-play',
+    play: { hit: false, bases: 1, label: 'error', battedBallType: 'ground', error: true },
+  };
+  /** Every judgement call goes the runner's way. */
+  const always = () => 0;
+
+  /** A half-inning with the given runners on and `outs` already recorded. */
+  function situation(bases: [boolean, boolean, boolean], outs: number): HalfInningState {
+    return { ...newHalfInning(), bases, outs };
+  }
+
+  it('turns two on a ground ball with a man on first', () => {
+    const s = applyPitch(situation([true, false, false], 0), grounder, always);
+    expect(s.outs).toBe(2);
+    expect(s.bases).toEqual([false, false, false]);
+    expect(s.lastEvent).toBe('double play');
+  });
+
+  it('takes the force at second when the double play is not turned', () => {
+    const s = applyPitch(situation([true, false, false], 0), grounder, () => 0.99);
+    expect(s.outs).toBe(1);
+    expect(s.bases).toEqual([true, false, false]);
+    expect(s.lastEvent).toBe("fielder's choice");
+  });
+
+  it('never turns two with two already out', () => {
+    const s = applyPitch(situation([true, false, false], 2), grounder, always);
+    expect(s.outs).toBe(3);
+    expect(s.over).toBe(true);
+  });
+
+  it('scores a runner from third on a sacrifice fly', () => {
+    const s = applyPitch(situation([false, false, true], 1), flyBall, always);
+    expect(s.runs).toBe(1);
+    expect(s.outs).toBe(2);
+    expect(s.bases).toEqual([false, false, false]);
+    expect(s.lastEvent).toBe('sacrifice fly, 1 in');
+  });
+
+  it('will not score on a fly ball for the third out', () => {
+    const s = applyPitch(situation([false, false, true], 2), flyBall, always);
+    expect(s.runs).toBe(0);
+    expect(s.over).toBe(true);
+  });
+
+  it('scores a man from second on a single when he is running', () => {
+    const s = applyPitch(situation([false, true, false], 0), hit('single'), always);
+    expect(s.runs).toBe(1);
+  });
+
+  it('holds him at third on the same single when he is not', () => {
+    const s = applyPitch(situation([false, true, false], 0), hit('single'), () => 0.99);
+    expect(s.runs).toBe(0);
+    expect(s.bases).toEqual([true, false, true]);
+  });
+
+  it('puts the batter on first when the defence boots it', () => {
+    const s = applyPitch(situation([false, false, false], 0), bootedIt, always);
+    expect(s.outs).toBe(0);
+    expect(s.bases).toEqual([true, false, false]);
+    expect(s.lastEvent).toBe('reached on an error');
+  });
+});
+
+describe('batting order', () => {
+  it('moves to the next hitter only when the plate appearance ends', () => {
+    expect(replay(ball).battingOrderIndex).toBe(0);
+    expect(replay(ball, ball, ball, ball).battingOrderIndex).toBe(1);
+    expect(replay(calledStrike, whiff, whiff).battingOrderIndex).toBe(1);
+    expect(replay(hit('single')).battingOrderIndex).toBe(1);
+  });
+
+  it('wraps around after the ninth hitter', () => {
+    let s = newHalfInning(8);
+    s = applyPitch(s, hit('single'), () => 0.99);
+    expect(s.battingOrderIndex).toBe(0);
+  });
+
+  it('starts a half-inning wherever the order left off', () => {
+    expect(newHalfInning(5).battingOrderIndex).toBe(5);
   });
 });

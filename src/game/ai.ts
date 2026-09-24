@@ -5,6 +5,7 @@
  */
 
 import type { HalfInningState } from './inning.ts';
+import type { Attributes } from './attributes.ts';
 
 export interface BatterAI {
   /** Chance of swinging at a pitch outside the zone. */
@@ -20,9 +21,24 @@ export interface BatterAI {
 export const LEAGUE_AVERAGE_BATTER: BatterAI = {
   chaseRate: 0.28,
   zoneSwingRate: 0.66,
-  timingSigma: 0.12,
+  timingSigma: 0.26,
   power: 0.5,
 };
+
+/**
+ * Build a batting approach from a player's attributes, so the man due up
+ * actually behaves like himself. Contact hitters protect the zone and chase
+ * less; big swingers accept more timing spread in exchange for power.
+ */
+export function batterAIFor(attributes: Attributes): BatterAI {
+  const { contact, power } = attributes;
+  return {
+    chaseRate: 0.34 - contact * 0.14,
+    zoneSwingRate: 0.6 + contact * 0.12,
+    timingSigma: 0.3 - contact * 0.07,
+    power,
+  };
+}
 
 export interface BatterDecision {
   swing: boolean;

@@ -15,10 +15,10 @@ export interface SwingJudgement {
 
 /** Absolute timing error thresholds, in seconds. */
 export const WINDOWS = {
-  perfect: 0.04,
-  solid: 0.09,
-  contact: 0.14,
-  foul: 0.22,
+  perfect: 0.03,
+  solid: 0.085,
+  contact: 0.115,
+  foul: 0.19,
 } as const;
 
 /**
@@ -38,40 +38,63 @@ export function judgeSwing(
   return { result: 'whiff', quality: null };
 }
 
-const EXIT_SPEED: Record<ContactQuality, number> = {
-  perfect: 38,
-  solid: 28,
-  weak: 15,
-};
+/** Exit speed, m/s, of a ball squared up dead centre. */
+const MAX_EXIT_SPEED = 40;
+/** Exit speed, m/s, of a ball at the very edge of the contact window. */
+const MIN_EXIT_SPEED = 15;
 
 /**
- * Launch angle in degrees for a contact swing. A clean hit drives the ball on a
- * carrying line; a weak hit is a grounder when you roll over an early swing and
- * a lazy pop-up when you get under a late one.
+ * How well the ball was barrelled, 0..1, from the timing error alone. This is
+ * the single number both exit speed and launch angle hang off, which is why a
+ * mistimed swing now dribbles one to short instead of leaving the yard.
  */
-function launchAngleDeg(errorSeconds: number, quality: ContactQuality): number {
-  if (quality === 'perfect') return 26;
-  if (quality === 'solid') return 20;
-  return errorSeconds < 0 ? 7 : 44;
+function barrel(errorSeconds: number): number {
+  const t = 1 - Math.abs(errorSeconds) / WINDOWS.contact;
+  return t < 0 ? 0 : t > 1 ? 1 : t;
+}
+
+/**
+ * Launch angle in degrees. Timing sets the centre of the window — roll over an
+ * early swing and you beat it into the ground, get under a late one and you pop
+ * it up — and `rand` supplies the bat-plane variation that decides whether a
+ * well-struck ball is a line drive or a ball in the seats. Without that
+ * variation every squared-up swing produced exactly the same trajectory, which
+ * is what used to make every barrel a home run.
+ */
+function launchAngleDeg(errorSeconds: number, rand: () => number): number {
+  const tilt = (errorSeconds / WINDOWS.contact) * 24;
+  const jitter = (rand() + rand() - 1) * 15;
+  const angle = 13 + tilt + jitter;
+  return angle < -8 ? -8 : angle > 62 ? 62 : angle;
 }
 
 /**
  * Batted-ball velocity (m/s) for a contact swing. The ball travels out toward
  * the outfield (+z, past the mound); earlier contact pulls it toward +x, later
- * contact pushes it toward -x. Quality drives launch angle and speed.
- * `errorSeconds` negative = early. `powerMultiplier` (default 1, an average
- * `power` attribute) scales exit speed — see `game/attributes.ts`.
+ * contact pushes it toward -x. `errorSeconds` negative = early.
+ * `powerMultiplier` (default 1, an average `power` attribute) scales exit speed
+ * — see `game/attributes.ts`. `rand` in [0, 1) supplies launch-angle variation
+ * and defaults to a deterministic midpoint so tests stay reproducible.
  */
 export function launchVelocity(
   errorSeconds: number,
   quality: ContactQuality,
   powerMultiplier = 1,
+  rand: () => number = () => 0.5,
 ): [number, number, number] {
-  const speed = EXIT_SPEED[quality] * powerMultiplier;
-  const angle = (launchAngleDeg(errorSeconds, quality) * Math.PI) / 180;
+  const b = barrel(errorSeconds);
+  // Quality is the label the HUD shows; barrel is what the physics uses. They
+  // agree by construction, since both come from the same timing error.
+  void quality;
+  const speed =
+    (MIN_EXIT_SPEED + (MAX_EXIT_SPEED - MIN_EXIT_SPEED) * Math.pow(b, 1.45)) *
+    powerMultiplier;
+  const angle = (launchAngleDeg(errorSeconds, rand) * Math.PI) / 180;
 
-  // spray: -0.35s..+0.35s of error maps to roughly -35deg..+35deg of pull/push
-  const spray = Math.max(-0.6, Math.min(0.6, -errorSeconds * 1.8));
+  // Spray angle. The range runs past the foul lines on purpose: pulling a ball
+  // hard enough to hook it foul is a normal outcome, and `atbat.ts` turns
+  // anything outside the lines into a foul ball rather than a fair one.
+  const spray = Math.max(-0.95, Math.min(0.95, -errorSeconds * 2.6));
 
   const horizontal = speed * Math.cos(angle);
   const vy = speed * Math.sin(angle);
