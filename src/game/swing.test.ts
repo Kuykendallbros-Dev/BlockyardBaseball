@@ -54,10 +54,14 @@ describe('launchVelocity', () => {
     expect(launchVelocity(0.1, 'solid')[0]).toBeLessThan(0);
   });
 
-  it('hits a perfect ball harder than a weak one', () => {
+  it('hits a well-timed ball harder than a mistimed one', () => {
+    // Exit speed now comes from how well the ball was barrelled — the timing
+    // error — rather than from the quality label, which is only what the HUD
+    // shows. A swing on time leaves the bat hot; one at the edge of the
+    // contact window dribbles off it.
     const speed = (v: [number, number, number]) => Math.hypot(...v);
     expect(speed(launchVelocity(0, 'perfect'))).toBeGreaterThan(
-      speed(launchVelocity(0, 'weak')),
+      speed(launchVelocity(WINDOWS.contact * 0.95, 'weak')),
     );
   });
 

@@ -14,6 +14,9 @@ import { isZoneGuessCorrect, type TileCoord } from './strikezone.ts';
 export type { BallInPlay, FieldingDifficulty, HitLabel, OutLabel } from './fielding.ts';
 export { FENCE_FT } from './fielding.ts';
 
+/** Spray angle, in degrees either side of centre, where fair territory ends. */
+export const FOUL_LINE_DEG = 45;
+
 export type PitchOutcome =
   | { kind: 'ball' }
   | { kind: 'called-strike' }
@@ -89,5 +92,7 @@ export function resolvePitch(
   if (landing === null) {
     throw new Error('resolvePitch: a contact swing needs a landing');
   }
+  // Outside the foul lines it is a foul ball, not a ball the defence plays.
+  if (Math.abs(landing.bearingDeg) > FOUL_LINE_DEG) return { kind: 'foul' };
   return { kind: 'in-play', play: fieldBallInPlay(landing, rand, difficulty) };
 }

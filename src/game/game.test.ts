@@ -9,11 +9,11 @@ import {
 
 const out: PitchOutcome = {
   kind: 'in-play',
-  play: { hit: false, bases: 0, label: 'flyout' },
+  play: { hit: false, bases: 0, label: 'flyout', battedBallType: 'fly', error: false },
 };
 const homer: PitchOutcome = {
   kind: 'in-play',
-  play: { hit: true, bases: 4, label: 'home run' },
+  play: { hit: true, bases: 4, label: 'home run', battedBallType: 'fly', error: false },
 };
 
 /** Play the current half-inning: `homers` solo shots, then three outs. */
@@ -105,8 +105,14 @@ describe('random games always finish', () => {
     out,
     out,
     out,
-    { kind: 'in-play', play: { hit: true, bases: 1, label: 'single' } },
-    { kind: 'in-play', play: { hit: true, bases: 2, label: 'double' } },
+    {
+      kind: 'in-play',
+      play: { hit: true, bases: 1, label: 'single', battedBallType: 'line', error: false },
+    },
+    {
+      kind: 'in-play',
+      play: { hit: true, bases: 2, label: 'double', battedBallType: 'line', error: false },
+    },
     homer,
     { kind: 'ball' },
     { kind: 'swinging-strike' },

@@ -577,7 +577,10 @@ export function createScene(container: HTMLElement): BlockyardScene {
 
     if (judgement.result === 'contact' && judgement.quality) {
       const quality = judgement.quality;
-      battedVel = launchVelocity(error, quality, powerMult);
+      // `Math.random` supplies the bat-plane variation, same as the headless
+      // sim does — without it every squared-up swing produces an identical
+      // trajectory and the ball either always leaves the yard or never does.
+      battedVel = launchVelocity(error, quality, powerMult, Math.random);
       ballFlying = true;
       flightClock = 0;
       const feet = Math.round(carryDistance(contactPos, battedVel) * METRES_TO_FEET);

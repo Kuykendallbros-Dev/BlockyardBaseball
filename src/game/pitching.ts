@@ -56,7 +56,7 @@ const PROFILES: Record<PitchType, TypeProfile> = {
 };
 
 const ORDER: readonly PitchType[] = ['fastball', 'breaking', 'changeup'];
-const ZONE_TARGET_RATE = 0.62;
+const ZONE_TARGET_RATE = 0.52;
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;

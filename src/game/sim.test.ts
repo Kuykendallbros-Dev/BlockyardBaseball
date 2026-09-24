@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import type { BatterAI } from './ai.ts';
+import { type Team, makeBaselineTeam } from './roster.ts';
 import { lineScoreByInning } from './game.ts';
 import { simulateGame } from './sim.ts';
 
@@ -28,9 +28,10 @@ describe('full game simulation', () => {
       expect(game.final).toBe(true);
       expect(game.winner).not.toBeNull();
       expect(game.score.away).not.toBe(game.score.home);
-      // Generous cap: `fielding.ts` is a placeholder pending Phase 2
-      // attribute-driven defense, so games run longer than a real 9 innings.
-      expect(pitches).toBeLessThan(15000);
+      // A balanced nine-inning game runs roughly 240 pitches. The cap is loose
+      // enough for extra innings but tight enough that a rules regression which
+      // stops recording outs fails here instead of quietly running forever.
+      expect(pitches).toBeLessThan(900);
 
       const winnerRuns =
         game.winner === 'home' ? game.score.home : game.score.away;
@@ -58,25 +59,62 @@ describe('full game simulation', () => {
   });
 
   it('a clearly better lineup wins the large majority of games', () => {
-    const ace: BatterAI = {
-      chaseRate: 0.15,
-      zoneSwingRate: 0.78,
-      timingSigma: 0.055,
-      power: 0.9,
+    const clubOfBats = (name: string, stat: number): Team => {
+      const base = makeBaselineTeam(name);
+      return {
+        ...base,
+        lineup: base.lineup.map((p) => ({
+          ...p,
+          attributes: { power: stat, contact: stat, speed: stat },
+        })),
+      };
     };
-    const scrub: BatterAI = {
-      chaseRate: 0.4,
-      zoneSwingRate: 0.55,
-      timingSigma: 0.16,
-      power: 0.2,
-    };
+
+    const ace = clubOfBats('Ace', 0.95);
+    const scrub = clubOfBats('Scrub', 0.05);
 
     let aceWins = 0;
     for (let seed = 1; seed <= 120; seed++) {
-      // ace bats home so it also gets the walk-off edge; fine for a strength check
-      const { game } = simulateGame(rng(seed), scrub, ace);
+      // Ace bats home so it also gets the walk-off edge; fine for a strength check.
+      const { game } = simulateGame(rng(seed), { away: scrub, home: ace });
       if (game.winner === 'home') aceWins += 1;
     }
     expect(aceWins).toBeGreaterThan(90);
+  });
+
+  it('plays the whole batting order rather than one batter over and over', () => {
+    const { game } = simulateGame(rng(42));
+    // Nine innings of outs alone guarantees each side turns its order over
+    // more than twice, so every slot must have come to the plate.
+    expect(game.dueUp.away).toBeGreaterThanOrEqual(0);
+    expect(game.dueUp.home).toBeGreaterThanOrEqual(0);
+    expect(game.teams.away.lineup).toHaveLength(9);
+    expect(game.teams.home.lineup).toHaveLength(9);
+  });
+
+  it('goes to the bullpen once the starter is past his stamina', () => {
+    let wentToThePen = 0;
+    for (let seed = 1; seed <= 40; seed++) {
+      const { game } = simulateGame(rng(seed));
+      if (game.pitching.away.bullpenIndex >= 0) wentToThePen += 1;
+    }
+    expect(wentToThePen).toBeGreaterThan(30);
+  });
+
+  it('produces a box score in the shape of real baseball', () => {
+    let runs = 0;
+    let pitches = 0;
+    const games = 150;
+    for (let seed = 1; seed <= games; seed++) {
+      const r = simulateGame(rng(seed));
+      runs += r.game.score.away + r.game.score.home;
+      pitches += r.pitches;
+    }
+    // Both sides combined. Real major-league baseball sits near 9 runs and
+    // 290 pitches; this is the guard that stops the 50-run games coming back.
+    expect(runs / games).toBeGreaterThan(4);
+    expect(runs / games).toBeLessThan(15);
+    expect(pitches / games).toBeGreaterThan(150);
+    expect(pitches / games).toBeLessThan(400);
   });
 });
